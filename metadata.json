@@ -1,0 +1,6 @@
+{
+  "name": "Otiko",
+  "description": "Otiko Ticketing Platform - Dual-sided Public Buyer Site and Organizer Dashboard with simulated M-Pesa payments, real-time ticket reservations, PDF tickets, and sales analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

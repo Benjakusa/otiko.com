@@ -1,0 +1,86 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run Backend Tests
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pytest tests/ --cov=app
+      
+      - name: Run Frontend Tests
+        run: |
+          cd frontend-public
+          npm ci
+          npm run test
+          npm run lint
+      
+      - name: Security Scan
+        run: |
+          cd backend
+          pip-audit
+          cd ../frontend-public
+          npm audit
+          
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      
+      - name: Build Backend Docker Image
+        run: |
+          docker build -t gcr.io/otiko-production/backend:latest ./backend
+          docker push gcr.io/otiko-production/backend:latest
+      
+      - name: Deploy Backend to Cloud Run
+        run: |
+          gcloud run deploy otiko-backend \
+            --image gcr.io/otiko-production/backend:latest \
+            --platform managed \
+            --region us-central1 \
+            --allow-unauthenticated \
+            --memory 2Gi \
+            --cpu 2 \
+            --concurrency 80 \
+            --max-instances 100
+      
+      - name: Run Database Migrations
+        run: |
+          gcloud run jobs execute otiko-migrations --wait
+      
+      - name: Deploy Celery Workers
+        run: |
+          gcloud run jobs deploy otiko-worker \
+            --image gcr.io/otiko-production/worker:latest \
+            --tasks 5 \
+            --max-retries 3
+      
+      - name: Deploy Public Frontend to Firebase
+        run: |
+          cd frontend-public
+          npm run build
+          firebase deploy --only hosting:otiko-public
+      
+      - name: Deploy Admin Frontend to Firebase
+        run: |
+          cd frontend-admin
+          npm run build
+          firebase deploy --only hosting:otiko-admin

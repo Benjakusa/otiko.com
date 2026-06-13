@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: otiko-postgres
+    environment:
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: secure_password_132
+      POSTGRES_DB: otiko_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_user -d otiko_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: otiko-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: otiko-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://app_user:secure_password_132@db:5432/otiko_db
+      - REDIS_URL=redis://redis:6379/0
+      - FIREBASE_CREDENTIALS={"type": "service_account", "project_id": "otiko-sandbox"}
+      - SECRET_KEY=otiko-shared-signing-secret-2026
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery_worker:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile
+    container_name: otiko-celery-worker
+    command: celery -A tasks worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://app_user:secure_password_132@db:5432/otiko_db
+      - REDIS_URL=redis://redis:6379/0
+      - MPESA_CONSUMER_KEY=mock_key
+      - MPESA_CONSUMER_SECRET=mock_secret
+      - MPESA_PASSKEY=mock_passkey
+      - MPESA_CALLBACK_SECRET=otiko-secret-callback-token-2026
+      - QR_SIGNING_SECRET=otiko-shared-signing-secret-2026
+      - GCS_TICKETS_BUCKET=otiko-tickets-sandbox-bucket
+      - SENDGRID_API_KEY=mock-sendgrid-api-key
+      - PYTHONPATH=/app:/backend:/app/workers
+    volumes:
+      - ./workers:/app
+      - ./backend:/backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery_beat:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile
+    container_name: otiko-celery-beat
+    command: celery -A tasks beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://app_user:secure_password_132@db:5432/otiko_db
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app:/backend:/app/workers
+    volumes:
+      - ./workers:/app
+      - ./backend:/backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
