@@ -283,39 +283,7 @@ app.post("/api/organizers/upload-kyc", (req, res) => {
   res.json({ message: "KYC documents uploaded safely to storage and marked pending approval", organizer: org });
 });
 
-// --- ORGANIZER-SCOPED EVENTS (Dashboard) — STRICT DATA ISOLATION ---
-// Returns ONLY events owned by the authenticated organizer.
-// Enforces: SELECT * FROM events WHERE organizer_id = current_user.id
-app.get("/api/organizer/events", (req, res) => {
-  const org = getOrganizerByToken(req);
-  if (!org) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  const { status, search } = req.query;
-  // CRITICAL: filter strictly by org.id — never expose other organizers' events
-  let filtered = events.filter(e => e.organizerId === org.id);
-
-  if (status) {
-    filtered = filtered.filter(e => e.status === status);
-  }
-  if (search) {
-    const q = String(search).toLowerCase();
-    filtered = filtered.filter(e => e.name.toLowerCase().includes(q) || e.venue.toLowerCase().includes(q));
-  }
-
-  const result = filtered.map(evt => {
-    const cats = ticketCategories.filter(tc => tc.eventId === evt.id);
-    const minPrice = cats.reduce((min, cat) => cat.price < min ? cat.price : min, cats[0]?.price || 0);
-    const maxPrice = cats.reduce((max, cat) => cat.price > max ? cat.price : max, cats[0]?.price || 0);
-    const isSoldOut = cats.every(c => c.remainingQuantity <= 0);
-    return { ...evt, categories: cats, minPrice, maxPrice, isSoldOut };
-  });
-
-  res.json(result);
-});
-
-// --- PUBLIC EVENTS (Buyer Portal) — READ-ONLY, NO ORGANIZER DATA ---
+// --- EVENTS & CATEGORIES ---
 app.get("/api/events", (req, res) => {
   const { status, search } = req.query;
   let filtered = [...events];
@@ -444,6 +412,64 @@ app.patch("/api/events/:code", (req, res) => {
   evt.updatedAt = new Date().toISOString();
 
   res.json(evt);
+});
+
+app.delete("/api/events/:code", (req, res) => {
+  const org = getOrganizerByToken(req);
+  if (!org) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { code } = req.params;
+  const evtIndex = events.findIndex(e => e.eventCode === code);
+  if (evtIndex === -1) {
+    return res.status(404).json({ error: "Event not found" });
+  }
+
+  const evt = events[evtIndex];
+  if (evt.organizerId !== org.id) {
+    return res.status(403).json({ error: "You do not own this event" });
+  }
+
+  // Soft delete by setting status to cancelled
+  evt.status = "cancelled";
+  evt.updatedAt = new Date().toISOString();
+
+  res.json({ success: true, message: "Event cancelled successfully.", event: evt });
+});
+
+app.get("/api/events/:code/tickets", (req, res) => {
+  const org = getOrganizerByToken(req);
+  if (!org) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { code } = req.params;
+  const evt = events.find(e => e.eventCode === code);
+  if (!evt) {
+    return res.status(404).json({ error: "Event not found" });
+  }
+
+  if (evt.organizerId !== org.id) {
+    return res.status(403).json({ error: "You do not own this event" });
+  }
+
+  const eventTickets = tickets.filter(t => t.eventId === evt.id);
+  
+  if (req.query.export === "csv") {
+    // Generate CSV string
+    let csv = "Ticket ID,Category,Ticket Number,Buyer Name,Buyer Email,Buyer Phone,Status,Issued At\n";
+    eventTickets.forEach(t => {
+      const order = orders.find(o => o.id === t.orderId);
+      const cat = ticketCategories.find(c => c.id === t.categoryId);
+      csv += `"${t.id}","${cat?.name || "N/A"}",${t.ticketNumber},"${order?.buyerName || "N/A"}","${order?.buyerEmail || "N/A"}","${order?.buyerPhone || "N/A"}","${t.status}","${t.issuedAt || "N/A"}"\n`;
+    });
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename=attendees_${code}.csv`);
+    return res.send(csv);
+  }
+
+  res.json(eventTickets);
 });
 
 // --- ORDERS & RESERVATIONS (ATOMIC DECREMENT LOGIC) ---

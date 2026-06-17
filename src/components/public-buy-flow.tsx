@@ -427,49 +427,39 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
 
         {/* STEP 2: STK PUSH PAYING STATE */}
         {step === "paying" && order && (
-          <div className="p-6 space-y-6">
-            <div className="flex flex-col items-center justify-center py-6 text-center text-sm space-y-2">
-              <Loader2 className="h-10 w-10 text-red-500 animate-spin" />
-              <h4 className="font-semibold text-lg text-white mt-4">Waiting for M-Pesa PIN Input...</h4>
-              <p className="text-xs text-neutral-400 max-w-sm">
-                We have pushed a secure STK prompt of <span className="font-semibold text-red-500">KES {order.totalAmount.toLocaleString()}</span> to the handset registred with <span className="font-mono text-white">{order.buyerPhone}</span>.
-              </p>
-            </div>
-
-            {/* DARAJA SANDBOX TELEMETRY LOGS */}
-            <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-5 font-mono text-xs">
-              <div className="flex justify-between items-center mb-3 text-neutral-500 text-[10px] uppercase font-sans tracking-widest font-semibold border-b border-neutral-800 pb-2">
-                <span>Daraja STK Sandboxed Telemetry</span>
-                <span className="flex items-center gap-1 text-emerald-500">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Safe Listening Endpoint
+          <div className="p-8 space-y-6">
+            <div className="flex flex-col items-center justify-center py-6 text-center space-y-4">
+              <div className="relative">
+                <Loader2 className="h-12 w-12 text-emerald-500 animate-spin" />
+                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-emerald-500 font-mono">
+                  M
                 </span>
               </div>
-              <div className="space-y-1.5 text-neutral-300">
-                <p><span className="text-neutral-500">CheckoutID:</span> {mpesaNo || "Initiating..."}</p>
-                <p><span className="text-neutral-500">Client Status:</span> {stkStatus}</p>
-                <p><span className="text-neutral-500">Auth Token:</span> Bearer CACHED_IN_REDIS_TTL_3599</p>
+              
+              <div className="space-y-2">
+                <h4 className="font-bold text-lg text-white">Handset Verification Sent</h4>
+                <p className="text-xs text-neutral-400 max-w-sm leading-relaxed">
+                  A secure M-Pesa STK popup for <span className="font-extrabold text-white text-sm">KES {order.totalAmount.toLocaleString()}</span> has been sent to the phone <span className="font-mono text-emerald-400 font-semibold">{order.buyerPhone}</span>.
+                </p>
               </div>
+            </div>
 
-              {/* ACTION TOGGLES FOR EASY TESTING WITHOUT HANDSET KEY */}
-              <div className="mt-5 border-t border-neutral-800 pt-4 flex flex-col sm:flex-row gap-3 justify-center">
-                <button
-                  onClick={() => handleForcePaySuccess(true)}
-                  className="bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 hover:border-emerald-500 text-emerald-400 font-sans text-xs px-4 py-2 rounded-lg transition"
-                >
-                  Simulate M-Pesa Callback (Success)
-                </button>
-                <button
-                  onClick={() => handleForcePaySuccess(false)}
-                  className="bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 hover:border-rose-500 text-rose-400 font-sans text-xs px-3 py-2 rounded-lg transition"
-                >
-                  Simulate M-Pesa Callback (Cancel)
-                </button>
+            <div className="bg-neutral-950/60 border border-neutral-800 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-2.5 text-xs text-neutral-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                <span>Safeguarded Escrow Listening Active</span>
+              </div>
+              <p className="text-[11px] text-neutral-500 leading-relaxed">
+                Please unlock your mobile device and enter your M-Pesa PIN when prompted. Once authorized, your tickets will automatically unlock.
+              </p>
+              <div className="pt-2 border-t border-neutral-800 flex items-center justify-between text-[10px] text-neutral-500 font-mono">
+                <span>CHANNEL: M-PESA STK-PUSH</span>
+                <span>REF: {order.id.toUpperCase()}</span>
               </div>
             </div>
 
             <div className="text-[11px] text-center text-neutral-500 font-sans leading-normal">
-              Tickets will reserve for 5 minutes only. Do not refresh or browse back. Safaricom's webhook returns validation code automatically.
+              Tickets are reserved for 5 minutes. Do not close this browser tab. Safaricom checkout transaction is verified automatically.
             </div>
           </div>
         )}

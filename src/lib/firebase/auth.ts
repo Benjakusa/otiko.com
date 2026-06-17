@@ -4,6 +4,8 @@ import {
   createUserWithEmailAndPassword as fbCreateUser, 
   signInWithEmailAndPassword as fbSignIn, 
   sendPasswordResetEmail as fbResetEmail,
+  GoogleAuthProvider,
+  signInWithPopup,
   User as FirebaseUser,
   Auth as FirebaseAuth
 } from "firebase/auth";
@@ -95,6 +97,27 @@ export const authService = {
         throw { code: "auth/wrong-password", message: "Incorrect password." };
       }
       return { uid: user.uid, email: user.email };
+    }
+  },
+
+  signInWithGoogle: async (): Promise<{ uid: string; email: string; displayName: string }> => {
+    if (isFirebaseProxyActive && realAuth) {
+      const provider = new GoogleAuthProvider();
+      // Enforce custom parameters to ensure prompt selection
+      provider.setCustomParameters({ prompt: "select_account" });
+      const userCred = await signInWithPopup(realAuth, provider);
+      return {
+        uid: userCred.user.uid,
+        email: userCred.user.email || "",
+        displayName: userCred.user.displayName || "Google Organizer"
+      };
+    } else {
+      // Simulator: Sign in with mock Google credentials
+      return {
+        uid: "user-default-uid",
+        email: "events@solfest.co.ke",
+        displayName: "Sol Generational Group"
+      };
     }
   },
 
