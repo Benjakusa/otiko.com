@@ -42,7 +42,8 @@ export default function App() {
 
 
   // App data state
-  const [events, setEvents] = useState<Event[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);           // Public buyer portal (all active events)
+  const [organizerEvents, setOrganizerEvents] = useState<Event[]>([]); // Organizer workspace (own events only — ISOLATED)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -84,14 +85,14 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch events
+      // 1. Fetch ALL active events for the public buyer portal
       const eventsRes = await fetch("/api/events");
       if (eventsRes.ok) {
         const eventsData = await eventsRes.json();
         setEvents(eventsData);
       }
 
-      // 2. Fetch organizer
+      // 2. Fetch organizer profile
       const orgRes = await fetch("/api/organizers/me", {
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -102,7 +103,17 @@ export default function App() {
         setOrganizer(null);
       }
 
-      // 3. Fetch wallet/finance metrics
+      // 3. Fetch organizer-scoped events (DATA ISOLATION: only this organizer's events)
+      //    Endpoint strictly enforces: SELECT * FROM events WHERE organizer_id = current_user.id
+      const orgEventsRes = await fetch("/api/organizer/events", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (orgEventsRes.ok) {
+        const orgEventsData = await orgEventsRes.json();
+        setOrganizerEvents(orgEventsData);
+      }
+
+      // 4. Fetch wallet/finance metrics (already scoped to org.id on the backend)
       const walletRes = await fetch("/api/wallet/overview", {
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -1263,14 +1274,14 @@ export default function App() {
                             </td>
                           </tr>
                         ))
-                      ) : events.length === 0 ? (
+                      ) : organizerEvents.length === 0 ? (
                         <tr>
                           <td colSpan={5} className="py-8 text-center text-slate-400 text-xs">
                             No registered events found. Create a custom event above.
                           </td>
                         </tr>
                       ) : (
-                        events.map((evt) => (
+                        organizerEvents.map((evt) => (
                           <tr key={evt.id} className="hover:bg-slate-50/50">
                             <td className="py-4 font-mono font-bold text-slate-900">{evt.eventCode}</td>
                             <td className="py-4">

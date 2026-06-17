@@ -283,7 +283,39 @@ app.post("/api/organizers/upload-kyc", (req, res) => {
   res.json({ message: "KYC documents uploaded safely to storage and marked pending approval", organizer: org });
 });
 
-// --- EVENTS & CATEGORIES ---
+// --- ORGANIZER-SCOPED EVENTS (Dashboard) — STRICT DATA ISOLATION ---
+// Returns ONLY events owned by the authenticated organizer.
+// Enforces: SELECT * FROM events WHERE organizer_id = current_user.id
+app.get("/api/organizer/events", (req, res) => {
+  const org = getOrganizerByToken(req);
+  if (!org) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  const { status, search } = req.query;
+  // CRITICAL: filter strictly by org.id — never expose other organizers' events
+  let filtered = events.filter(e => e.organizerId === org.id);
+
+  if (status) {
+    filtered = filtered.filter(e => e.status === status);
+  }
+  if (search) {
+    const q = String(search).toLowerCase();
+    filtered = filtered.filter(e => e.name.toLowerCase().includes(q) || e.venue.toLowerCase().includes(q));
+  }
+
+  const result = filtered.map(evt => {
+    const cats = ticketCategories.filter(tc => tc.eventId === evt.id);
+    const minPrice = cats.reduce((min, cat) => cat.price < min ? cat.price : min, cats[0]?.price || 0);
+    const maxPrice = cats.reduce((max, cat) => cat.price > max ? cat.price : max, cats[0]?.price || 0);
+    const isSoldOut = cats.every(c => c.remainingQuantity <= 0);
+    return { ...evt, categories: cats, minPrice, maxPrice, isSoldOut };
+  });
+
+  res.json(result);
+});
+
+// --- PUBLIC EVENTS (Buyer Portal) — READ-ONLY, NO ORGANIZER DATA ---
 app.get("/api/events", (req, res) => {
   const { status, search } = req.query;
   let filtered = [...events];
