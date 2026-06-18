@@ -198,32 +198,7 @@ function generateEventCode(): string {
 }
 
 // ---------- SEED DATA ----------
-const seedData: { organizers: Organizer[]; events: Event[]; ticketCategories: TicketCategory[] } = {
-  organizers: [
-    {
-      id: "org-1", firebaseUid: "user-default-uid", name: "Sol Generational Group",
-      email: "events@solfest.co.ke", phone: "0712345678", businessName: "Solfest Ltd",
-      kycStatus: "verified" as const, mpesaPayoutNumber: "254712345678",
-      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    }
-  ],
-  events: [
-    { id: "evt-1", eventCode: "OTK-2026-000101", organizerId: "org-1", name: "Sol Fest 2026 - Uhuru Gardens", flyerUrl: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?auto=format&fit=crop&q=80&w=800", eventDate: "2026-08-15T18:00:00Z", venue: "Uhuru Gardens, Langata Road, Nairobi", description: "The ultimate celebration of African music, culture, and unity.", status: "active" as const, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { id: "evt-2", eventCode: "OTK-2026-000102", organizerId: "org-1", name: "Sauti Sol Farewell Tour - Live in Nairobi", flyerUrl: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&q=80&w=800", eventDate: "2026-11-20T19:00:00Z", venue: "KICC Plenary Hall, City Square, Nairobi", description: "The official, final, and historic culmination of their journey.", status: "active" as const, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { id: "evt-3", eventCode: "OTK-2026-000103", organizerId: "org-1", name: "Burna Boy Live in Nairobi", flyerUrl: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&q=80&w=800", eventDate: "2026-06-30T17:00:00Z", venue: "Nairobi Sports Club, Off Museum Hill", description: "The African Giant makes his triumphant return to Kenya.", status: "active" as const, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  ],
-  ticketCategories: [
-    { id: "cat-1-reg", eventId: "evt-1", name: "Regular Ticket", price: 2500, totalQuantity: 2000, remainingQuantity: 1845, createdAt: new Date().toISOString() },
-    { id: "cat-1-vip", eventId: "evt-1", name: "VIP Lounge", price: 6000, totalQuantity: 500, remainingQuantity: 412, createdAt: new Date().toISOString() },
-    { id: "cat-1-vvip", eventId: "evt-1", name: "VVIP Golden Circle", price: 15000, totalQuantity: 50, remainingQuantity: 14, createdAt: new Date().toISOString() },
-    { id: "cat-2-reg", eventId: "evt-2", name: "General Admission", price: 3500, totalQuantity: 1500, remainingQuantity: 1210, createdAt: new Date().toISOString() },
-    { id: "cat-2-vip", eventId: "evt-2", name: "VIP Balcony", price: 8500, totalQuantity: 300, remainingQuantity: 243, createdAt: new Date().toISOString() },
-    { id: "cat-3-reg", eventId: "evt-3", name: "Regular", price: 3000, totalQuantity: 5000, remainingQuantity: 4280, createdAt: new Date().toISOString() },
-    { id: "cat-3-vip", eventId: "evt-3", name: "VIP Backstage Pass", price: 10000, totalQuantity: 200, remainingQuantity: 194, createdAt: new Date().toISOString() },
-  ],
-};
-
-// ---------- LOAD FROM FIRESTORE OR SEED ----------
+// ---------- LOAD FROM FIRESTORE ----------
 async function loadData() {
   if (firestore) {
     try {
@@ -248,29 +223,11 @@ async function loadData() {
         return;
       }
     } catch (e) {
-      console.error("[Firestore] Error loading data, seeding:", e);
+      console.error("[Firestore] Error loading data:", e);
     }
   }
 
-  // Seed in-memory
-  organizers = [...seedData.organizers];
-  events = [...seedData.events];
-  ticketCategories = [...seedData.ticketCategories];
-
-  // Seed Firestore if available
-  if (firestore) {
-    try {
-      for (const org of seedData.organizers) await firestore.collection("organizers").doc(org.id).set(org);
-      for (const evt of seedData.events) await firestore.collection("events").doc(evt.id).set(evt);
-      for (const cat of seedData.ticketCategories) await firestore.collection("ticketCategories").doc(cat.id).set(cat);
-      console.log("[Firestore] Seed data written");
-    } catch (e) {
-      console.error("[Firestore] Failed to seed data, continuing in-memory:", (e as Error).message);
-      firestore = null;
-    }
-  }
-
-  console.log("[Server] Running with in-memory seed data");
+  console.log("[Server] No seed data — awaiting organizer-created events");
 }
 
 // ==================== API ENDPOINTS ====================
