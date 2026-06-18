@@ -1872,33 +1872,21 @@ export default function App() {
           {activeTab === "wallet" && (
             <div className="space-y-6 animate-fade-in pb-12">
               
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                  <h3 className="text-xl font-extrabold text-slate-950 tracking-tight">Payouts</h3>
-                  <p className="text-xs text-slate-500">Request payouts and view transaction history.</p>
-                </div>
-              </div>
-
-              {/* DYNAMIC METRICS FOR ORGANIZER FINANCES */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 
                 <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden">
                   <div className="flex justify-between items-start">
-                    <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider">Total Booking Sales</span>
+                    <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider">Bookings</span>
                     <BarChart3 className="h-4 w-4 text-slate-400" />
                   </div>
                   <div className="text-2xl font-black text-slate-950 font-mono mt-2">
                     KES {walletOverview?.grossCollected ? walletOverview.grossCollected.toLocaleString() : "0"}
                   </div>
-                  <p className="text-[10px] text-slate-500 mt-2 font-mono flex justify-between">
-                    <span>Platform Fee (5%):</span>
-                    <span className="font-bold">KES {walletOverview?.platformFees ? walletOverview.platformFees.toLocaleString() : "0"}</span>
-                  </p>
                 </div>
 
                 <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm relative overflow-hidden bg-gradient-to-tr from-slate-50 to-transparent">
                   <div className="flex justify-between items-start">
-                    <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider">Withdrawn / Processing</span>
+                    <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider">Withdrawals</span>
                     <TrendingDown className="h-4 w-4 text-slate-400" />
                   </div>
                   <div className="text-2xl font-black text-slate-950 font-mono mt-2">
@@ -1912,7 +1900,7 @@ export default function App() {
 
                 <div className="bg-[#0F172A] p-5 rounded-2xl shadow-sm relative overflow-hidden text-white">
                   <div className="flex justify-between items-start">
-                    <span className="text-[10px] text-slate-300 block uppercase font-bold tracking-wider">Available For Sweep</span>
+                    <span className="text-[10px] text-slate-300 block uppercase font-bold tracking-wider">Available</span>
                     <Wallet className="h-4 w-4 text-emerald-400" />
                   </div>
                   <div className="text-2xl font-black text-white font-mono mt-2">
@@ -1981,7 +1969,7 @@ export default function App() {
                       className="w-full bg-[#0F172A] hover:bg-slate-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                     >
                       {payoutLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4 text-emerald-400" />}
-                      Authorize Payout
+                      Request Payout
                     </button>
                   </form>
 
