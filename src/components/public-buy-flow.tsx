@@ -166,7 +166,7 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
         initiateStkPush(data.id, buyerPhone);
       }
     } catch (err) {
-      setError("Failed to connect with reservation system.");
+      setError("Failed to complete reservation.");
     } finally {
       setLoading(false);
     }
@@ -664,7 +664,7 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">M-Pesa Number</label>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">Phone Number</label>
                   <div className="relative">
                     <input type="tel" required placeholder="e.g. 0712345678" value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} className="w-full bg-white border border-slate-200 focus:border-red-500 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-900 focus:outline-none transition" />
                     <Phone className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
@@ -699,35 +699,24 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
             <div className="flex flex-col items-center justify-center py-6 text-center space-y-4">
               <div className="relative">
                 <Loader2 className="h-12 w-12 text-emerald-500 animate-spin" />
-                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-emerald-500 font-mono">
-                  M
-                </span>
               </div>
               
               <div className="space-y-2">
-                <h4 className="font-bold text-lg text-white">Handset Verification Sent</h4>
-                <p className="text-xs text-neutral-400 max-w-sm leading-relaxed">
-                  A secure M-Pesa STK popup for <span className="font-extrabold text-white text-sm">KES {order.totalAmount.toLocaleString()}</span> has been sent to the phone <span className="font-mono text-emerald-400 font-semibold">{order.buyerPhone}</span>.
+                <h4 className="font-bold text-lg text-slate-900">Payment Request Sent</h4>
+                <p className="text-xs text-slate-500 max-w-sm leading-relaxed">
+                  A payment request for <span className="font-bold text-slate-900">KES {order.totalAmount.toLocaleString()}</span> has been sent to <span className="font-mono font-semibold">{order.buyerPhone}</span>.
                 </p>
               </div>
             </div>
 
-            <div className="bg-neutral-950/60 border border-neutral-800 rounded-2xl p-5 space-y-3">
-              <div className="flex items-center gap-2.5 text-xs text-neutral-300">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-                <span>Safeguarded Escrow Listening Active</span>
-              </div>
-              <p className="text-[11px] text-neutral-500 leading-relaxed">
-                Please unlock your mobile device and enter your M-Pesa PIN when prompted. Once authorized, your tickets will automatically unlock.
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-3">
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Please check your phone and enter your PIN when prompted. Once confirmed, your tickets will appear automatically.
               </p>
-              <div className="pt-2 border-t border-neutral-800 flex items-center justify-between text-[10px] text-neutral-500 font-mono">
-                <span>CHANNEL: M-PESA STK-PUSH</span>
-                <span>REF: {order.id.toUpperCase()}</span>
-              </div>
             </div>
 
-            <div className="text-[11px] text-center text-neutral-500 font-sans leading-normal">
-              Tickets are reserved for 5 minutes. Do not close this browser tab. Safaricom checkout transaction is verified automatically.
+            <div className="text-xs text-center text-slate-400">
+              Tickets are reserved for 5 minutes. Do not close this browser tab.
             </div>
           </div>
         )}

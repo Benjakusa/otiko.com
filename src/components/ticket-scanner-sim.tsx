@@ -46,7 +46,7 @@ export default function TicketScannerSim({ onClose }: TicketScannerSimProps) {
         setScannedTicket(data.ticket);
       }
     } catch (err) {
-      setError("Server connection issue. Please verify endpoint state.");
+      setError("Unable to connect to server.");
     } finally {
       setLoading(false);
     }

@@ -349,14 +349,14 @@ export default function App() {
 
       const data = await res.json();
       if (!res.ok) {
-        setPayoutError(data.error || "Payout processing declined.");
+        setPayoutError(data.error || "Payout request failed.");
       } else {
-        setPayoutSuccess(`Successfully queued payout request of KES ${amt.toLocaleString()} to ${organizer?.mpesaPayoutNumber}. Complete within seconds!`);
+        setPayoutSuccess(`Payout request of KES ${amt.toLocaleString()} submitted.`);
         setPayoutAmount("");
         setTimeout(() => fetchData(), 2500);
       }
     } catch (err) {
-      setPayoutError("Error contacting secure ledger engine.");
+      setPayoutError("Failed to submit payout request.");
     } finally {
       setPayoutLoading(false);
     }
@@ -728,7 +728,7 @@ export default function App() {
                     Discover. Book. Attend.
                   </h1>
                   <p className="text-xs sm:text-sm text-slate-200 leading-relaxed max-w-md drop-shadow select-none">
-                    The easiest way to find and buy tickets to events near you. Safaricom Direct integrations.
+                    The easiest way to find and buy tickets to events near you.
                   </p>
 
                   {/* ACTIVE SEARCH FILTERS */}
@@ -951,10 +951,6 @@ export default function App() {
                   <div className="mt-4">
                     <p className="text-3xl font-extrabold text-slate-900 tracking-tight">
                       {loading ? "..." : (walletOverview?.ledger ? walletOverview.ledger.filter((x: any) => x.entryType === "sale").length : 1)}
-                    </p>
-                    <p className="text-[10px] text-emerald-600 font-semibold mt-1 flex items-center gap-0.5">
-                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-                      Direct API Callback Synced
                     </p>
                   </div>
                 </div>
@@ -1183,7 +1179,7 @@ export default function App() {
                         ) : (
                           <tr>
                             <td colSpan={4} className="py-8 text-center text-slate-400 text-xs font-sans">
-                              No sales transactions registered. Attend a ticket pass in public gate tab!
+                              No sales yet.
                             </td>
                           </tr>
                         )}
@@ -1203,7 +1199,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                   <h3 className="text-xl font-extrabold text-slate-950 tracking-tight">Active Events Center</h3>
-                  <p className="text-xs text-slate-500">Oversee active gates, track tier inventories, and extract guest registers.</p>
+                  <p className="text-xs text-slate-500">Manage your events, categories, and attendees.</p>
                 </div>
 
                 <button
@@ -1662,7 +1658,7 @@ export default function App() {
                         <div className="space-y-2 flex-1">
                           
                           <div className="flex justify-between items-center">
-                            <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Attendee Issued logs</h5>
+                            <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Attendees</h5>
                             <span className="text-[9px] font-mono text-emerald-600 font-bold bg-emerald-50 px-2 rounded">
                               {viewingEventTickets.length} Gate Passes
                             </span>
@@ -1672,7 +1668,7 @@ export default function App() {
                             {loadingEventTickets ? (
                               <div className="py-12 flex flex-col items-center gap-1.5 text-slate-400">
                                 <Loader2 className="h-5 w-5 animate-spin" />
-                                <span>Reading guest sequence...</span>
+                                <span>Loading...</span>
                               </div>
                             ) : viewingEventTickets.length === 0 ? (
                               <div className="py-12 text-center text-slate-400 text-xs font-sans">
@@ -1846,7 +1842,7 @@ export default function App() {
                     </div>
 
                     <p className="text-xs text-slate-600 leading-normal font-sans">
-                      Are you sure you want to cancel <strong>{deletingEvent.name}</strong>? This triggers immediate gate closure on key public checkout nodes. Past booked customers remain auditable in secure logs.
+                      Are you sure you want to cancel <strong>{deletingEvent.name}</strong>? This will close ticket sales and mark the event as cancelled. Existing tickets remain valid.
                     </p>
 
                     <div className="flex justify-end gap-2 text-xs pt-2">
@@ -1878,12 +1874,8 @@ export default function App() {
               
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
-                  <h3 className="text-xl font-extrabold text-slate-950 tracking-tight">Direct Cashout Ledger</h3>
-                  <p className="text-xs text-slate-500">Audit ticket cash flows, request instant B2C transfers, and monitor Daraja network queues.</p>
-                </div>
-                <div className="bg-slate-150 border px-3 py-1.5 rounded-xl flex items-center gap-2 text-slate-700">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  <span className="text-[10px] font-bold font-mono uppercase">VODAFONE Safaricom Node Online</span>
+                  <h3 className="text-xl font-extrabold text-slate-950 tracking-tight">Payouts</h3>
+                  <p className="text-xs text-slate-500">Request payouts and view transaction history.</p>
                 </div>
               </div>
 
@@ -1899,7 +1891,7 @@ export default function App() {
                     KES {walletOverview?.grossCollected ? walletOverview.grossCollected.toLocaleString() : "0"}
                   </div>
                   <p className="text-[10px] text-slate-500 mt-2 font-mono flex justify-between">
-                    <span>Platform Commission (5%):</span>
+                    <span>Platform Fee (5%):</span>
                     <span className="font-bold">KES {walletOverview?.platformFees ? walletOverview.platformFees.toLocaleString() : "0"}</span>
                   </p>
                 </div>
@@ -1914,7 +1906,7 @@ export default function App() {
                   </div>
                   <p className="text-[10px] text-slate-500 mt-2 flex items-center gap-1">
                     <CheckCircle className="h-3 w-3 text-emerald-500" />
-                    <span>Transferred securely via Daraja API</span>
+                    <span>Processed</span>
                   </p>
                 </div>
 
@@ -1927,7 +1919,7 @@ export default function App() {
                     KES {walletOverview?.availableBalance ? walletOverview.availableBalance.toLocaleString() : "0"}
                   </div>
                   <p className="text-[10px] text-emerald-400 mt-2 font-bold flex items-center gap-1">
-                    <CheckCircle className="h-3 w-3" /> Minimum payout gate limit: KES 100
+                    <CheckCircle className="h-3 w-3" /> Minimum payout: KES 100
                   </p>
                   <div className="absolute right-0 bottom-0 translate-x-3 translate-y-3 opacity-10">
                     <ShieldCheck className="h-28 w-28 text-white" />
@@ -1940,8 +1932,8 @@ export default function App() {
                 {/* PAYOUT REQUEST PANEL */}
                 <div className="bg-white p-6 rounded-2xl border border-slate-200/85 lg:col-span-2 space-y-4">
                   <div className="border-b border-sublte pb-3">
-                    <h4 className="font-extrabold text-slate-950 text-sm uppercase">Request Direct Wallet Cashout</h4>
-                    <p className="text-xs text-slate-400 mt-1">Sends immediate profit sweep using M-Pesa corporate disbursement lines.</p>
+                    <h4 className="font-extrabold text-slate-950 text-sm uppercase">Request Payout</h4>
+                    <p className="text-xs text-slate-400 mt-1">Request an instant payout to your registered number.</p>
                   </div>
 
                   <form onSubmit={handlePayoutRequest} className="space-y-4">
@@ -1959,7 +1951,7 @@ export default function App() {
                     )}
 
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase">M-Pesa Registered Number</label>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase">Payout Number</label>
                       <input
                         type="text"
                         disabled
@@ -1989,14 +1981,10 @@ export default function App() {
                       className="w-full bg-[#0F172A] hover:bg-slate-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                     >
                       {payoutLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4 text-emerald-400" />}
-                      Authorize Daraja Sweep
+                      Authorize Payout
                     </button>
                   </form>
 
-                  {/* Safaricom disclaimer */}
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-[10px] text-slate-400 leading-normal font-sans">
-                    <strong>Note:</strong> Simulated payouts are automatically authorized and processed in 6 seconds. The disbursement credit lists a live Transaction Hash code once finalized.
-                  </div>
                 </div>
 
                 {/* DUAL TABLE ARCHIVES (AUDIT LEDGER vs DISBURSEMENT HISTORY) */}
@@ -2010,7 +1998,7 @@ export default function App() {
                           walletSubTab === "ledger" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-900"
                         }`}
                       >
-                        Internal Ledger Reports
+                        Sales History
                       </button>
                       <button
                         onClick={() => setWalletSubTab("payouts")}
@@ -2018,7 +2006,7 @@ export default function App() {
                           walletSubTab === "payouts" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-900"
                         }`}
                       >
-                        M-Pesa Transfers
+                        Payout History
                         {walletOverview?.payouts && walletOverview.payouts.some((p: any) => p.status === "requested") && (
                           <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
                         )}
@@ -2026,7 +2014,7 @@ export default function App() {
                     </div>
 
                     <span className="text-[10px] font-bold text-slate-400 uppercase bg-slate-50 px-2 py-0.5 rounded tracking-wide shrink-0">
-                      🔒 Secured Audited Log
+                      History
                     </span>
                   </div>
 
@@ -2037,9 +2025,9 @@ export default function App() {
                         <table className="w-full text-left text-xs text-slate-700 min-w-[500px]">
                           <thead>
                             <tr className="border-b border-slate-100 text-slate-400 uppercase font-bold text-[9px] tracking-wider">
-                              <th className="pb-2">Transaction ID / Origin</th>
+                              <th className="pb-2">Reference</th>
                               <th className="pb-2">Type</th>
-                              <th className="pb-2">Platform Fee (5%)</th>
+                              <th className="pb-2">Fee (5%)</th>
                               <th className="pb-2 text-right">Net Profit</th>
                             </tr>
                           </thead>
@@ -2053,7 +2041,7 @@ export default function App() {
                             ) : !walletOverview.ledger || walletOverview.ledger.length === 0 ? (
                               <tr>
                                 <td colSpan={4} className="py-8 text-center text-slate-400 text-xs">
-                                  No transaction ledger lines recorded on organizer node.
+                                  No sales recorded yet.
                                 </td>
                               </tr>
                             ) : (
@@ -2089,10 +2077,10 @@ export default function App() {
                         <table className="w-full text-left text-xs text-slate-700 min-w-[500px]">
                           <thead>
                             <tr className="border-b border-slate-100 text-slate-400 uppercase font-bold text-[9px] tracking-wider">
-                              <th className="pb-2">Disbursement Code</th>
-                              <th className="pb-2">Mesa Transaction Hash</th>
-                              <th className="pb-2">Discharge Amount</th>
-                              <th className="pb-2 text-right">Status State</th>
+                              <th className="pb-2">Reference</th>
+                              <th className="pb-2">Transaction ID</th>
+                              <th className="pb-2">Amount</th>
+                              <th className="pb-2 text-right">Status</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-50">
@@ -2105,7 +2093,7 @@ export default function App() {
                             ) : !walletOverview.payouts || walletOverview.payouts.length === 0 ? (
                               <tr>
                                 <td colSpan={4} className="py-8 text-center text-slate-400 text-xs">
-                                  No payout requests filed for this organizer token.
+                                  No payout requests yet.
                                 </td>
                               </tr>
                             ) : (
@@ -2121,7 +2109,7 @@ export default function App() {
                                     <td className="py-3 font-mono text-slate-500 font-bold">
                                       {payout.mpesaTransactionId || (
                                         <span className="text-slate-455 italic flex items-center gap-1 text-[10px]">
-                                          <Loader2 className="h-3 w-3 animate-spin text-amber-500" /> Pending clearance...
+                                          <Loader2 className="h-3 w-3 animate-spin text-amber-500" /> Pending
                                         </span>
                                       )}
                                     </td>
@@ -2163,7 +2151,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                   <h3 className="text-xl font-extrabold text-slate-950 tracking-tight">Onboarding & Security Desk</h3>
-                  <p className="text-xs text-slate-500">Maintain corporate organizer specs and fulfill Safaricom legal identity verifications.</p>
+                  <p className="text-xs text-slate-500">Submit your business details for identity verification.</p>
                 </div>
                 <div className={`px-3 py-1.5 rounded-full text-xs font-bold font-sans uppercase border ${
                   organizer?.kycStatus === "verified"
@@ -2223,7 +2211,7 @@ export default function App() {
                       </div>
 
                       <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-500 uppercase">Safaricom Payout Pin Code (254...)</label>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase">M-Pesa Payout Number (254...)</label>
                         <input
                           type="text"
                           required
@@ -2256,7 +2244,7 @@ export default function App() {
                     <div>
                       <h4 className="font-extrabold text-slate-900 text-sm uppercase">KYC Enterprise Verifier</h4>
                       <p className="text-[11px] text-slate-455 mt-1 leading-normal">
-                        To fulfill Safaricom Daraja AML regulations, organizers must supply legal registration certificates.
+                        Upload your business registration certificate for verification.
                       </p>
                     </div>
                   </div>
@@ -2298,7 +2286,7 @@ export default function App() {
 
                     {kycSubmitted ? (
                       <div className="bg-emerald-50 text-emerald-700 text-[10px] p-3 rounded-xl border border-emerald-100 leading-normal font-medium font-sans">
-                        ✓ <strong>Entity credentials submitted:</strong> Credentials have been dispatched to platform compliance managers. Standard audits take up to 24 hours to clear.
+                        ✓ <strong>Documents submitted.</strong> Verification usually takes up to 24 hours.
                       </div>
                     ) : (
                       <button

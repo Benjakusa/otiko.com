@@ -371,7 +371,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
             <div className="bg-white rounded-xl border border-slate-100 p-5 shadow-sm">
               <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Net Balance</p>
               <p className="text-2xl font-bold mt-1.5 text-slate-900 font-mono">KES {walletOverview?.netBalance?.toLocaleString() || "0"}</p>
-              <p className="text-[10px] text-slate-400 mt-2">After platform fees</p>
+              <p className="text-[10px] text-slate-400 mt-2">Net amount</p>
             </div>
             <div className="bg-white rounded-xl border border-amber-100 p-5 shadow-sm bg-gradient-to-br from-amber-50">
               <p className="text-[11px] font-bold text-amber-600 uppercase tracking-wider">Reserved</p>
@@ -533,7 +533,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
               </div>
               <div>
                 <h4 className="font-bold text-slate-900 text-sm">KYC Verification</h4>
-                <p className="text-xs text-slate-500 mt-1">Verify your business identity to receive payouts via M-Pesa B2C.</p>
+                <p className="text-xs text-slate-500 mt-1">Verify your business identity to receive payouts.</p>
               </div>
             </div>
 
