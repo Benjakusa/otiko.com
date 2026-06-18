@@ -5,7 +5,6 @@ import {
 } from "lucide-react";
 import QRCodeLib from "qrcode";
 import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
 import { Event, Order, Ticket } from "../types";
 
 interface PublicBuyFlowProps {
@@ -191,58 +190,193 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
     });
   };
 
+  const loadImageAsDataUrl = async (url: string): Promise<string | null> => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  const drawTicketOnPage = async (pdf: jsPDF, ticket: Ticket, cat: { name?: string; price?: number } | undefined, qrDataUrl: string | undefined) => {
+    const pageW = 210;
+    const pageH = 297;
+    const margin = 15;
+    const contentW = pageW - margin * 2;
+    let y = margin;
+
+    // Brand header
+    pdf.setFontSize(24);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("OTIKO", margin, y);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(220, 38, 38);
+    pdf.text(".COM", margin + pdf.getTextWidth("OTIKO"), y);
+    pdf.setFontSize(8);
+    pdf.setTextColor(148, 163, 184);
+    pdf.text("Secure Ticket", margin, y + 5);
+    y += 14;
+
+    // Separator line
+    pdf.setDrawColor(226, 232, 240);
+    pdf.setLineWidth(0.5);
+    pdf.line(margin, y, pageW - margin, y);
+    y += 10;
+
+    // Event Banner
+    if (event.flyerUrl) {
+      const bannerDataUrl = await loadImageAsDataUrl(event.flyerUrl);
+      if (bannerDataUrl) {
+        try {
+          const bannerH = 50;
+          pdf.addImage(bannerDataUrl, "JPEG", margin, y, contentW, bannerH);
+          y += bannerH + 8;
+        } catch {
+          y += 4;
+        }
+      } else {
+        y += 4;
+      }
+    }
+
+    // Event Name
+    pdf.setFontSize(18);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(15, 23, 42);
+    const eventNameLines = pdf.splitTextToSize(event.name, contentW);
+    pdf.text(eventNameLines, margin, y);
+    y += eventNameLines.length * 10 + 2;
+
+    // Host
+    pdf.setFontSize(10);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(100, 116, 139);
+    pdf.text(`Hosted by ${organizerName}`, margin, y);
+    y += 10;
+
+    // Separator
+    pdf.setDrawColor(226, 232, 240);
+    pdf.setLineWidth(0.3);
+    pdf.line(margin, y, pageW - margin, y);
+    y += 8;
+
+    // Details in 2-column grid
+    const col1X = margin;
+    const col2X = margin + contentW / 2;
+    const labelSize = 7;
+    const valueSize = 10;
+    const rowH = 12;
+
+    pdf.setFontSize(labelSize);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(148, 163, 184);
+
+    pdf.text("TICKET TYPE", col1X, y);
+    pdf.text("AMOUNT PAID", col2X, y);
+    pdf.setFontSize(valueSize);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(cat?.name || "General", col1X, y + 5);
+    pdf.text(`KES ${cat?.price?.toLocaleString() || "—"}`, col2X, y + 5);
+    y += rowH;
+
+    pdf.setFontSize(labelSize);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(148, 163, 184);
+    pdf.text("DATE & TIME", col1X, y);
+    pdf.setFontSize(valueSize);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(formatDate(event.eventDate), col1X, y + 5);
+    y += rowH;
+
+    pdf.setFontSize(labelSize);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(148, 163, 184);
+    pdf.text("VENUE", col1X, y);
+    pdf.setFontSize(valueSize);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(15, 23, 42);
+    const venueLines = pdf.splitTextToSize(event.venue, contentW / 2);
+    pdf.text(venueLines, col1X, y + 5);
+    y += Math.max(rowH, venueLines.length * 6 + 4);
+
+    // Separator
+    pdf.setDrawColor(226, 232, 240);
+    pdf.setLineWidth(0.3);
+    pdf.line(margin, y, pageW - margin, y);
+    y += 8;
+
+    // Ticket Number box
+    const tktBoxY = y;
+    pdf.setFillColor(248, 250, 252);
+    pdf.setDrawColor(226, 232, 240);
+    pdf.roundedRect(margin, tktBoxY, contentW, 18, 3, 3, "FD");
+    pdf.setFontSize(7);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(148, 163, 184);
+    pdf.text("TICKET NUMBER", margin + 6, tktBoxY + 7);
+    pdf.setFontSize(10);
+    pdf.setFont("courier", "bold");
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(ticket.ticketNumber, margin + 6, tktBoxY + 15);
+    y = tktBoxY + 24;
+
+    // QR Code
+    if (qrDataUrl) {
+      const qrSize = 55;
+      const qrX = (pageW - qrSize) / 2;
+      const qrY = y;
+      try {
+        pdf.addImage(qrDataUrl, "PNG", qrX, qrY, qrSize, qrSize);
+      } catch {
+        // QR failed to render
+      }
+      y += qrSize + 4;
+    } else {
+      y += 8;
+    }
+
+    // Powered by
+    pdf.setFontSize(8);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(148, 163, 184);
+    pdf.text("Powered by Otiko.com", pageW / 2, y, { align: "center" });
+  };
+
   const generatePdf = async (ticketIndex?: number) => {
     const indices = ticketIndex !== undefined ? [ticketIndex] : tickets.map((_, i) => i);
     if (indices.length === 0) return;
 
     const pdf = new jsPDF("p", "mm", "a4");
-    const pageW = 210;
-    const pageH = 297;
-    const margin = 10;
-    const contentW = pageW - margin * 2;
 
     for (let idx = 0; idx < indices.length; idx++) {
       const ti = indices[idx];
       const ticket = tickets[ti];
       if (!ticket) continue;
 
-      const el = document.getElementById(`ticket-card-${ticket.id}`);
-      if (!el) continue;
+      if (idx > 0) pdf.addPage();
 
-      try {
-        const canvas = await html2canvas(el, {
-          scale: 2,
-          useCORS: true,
-          allowTaint: true,
-          backgroundColor: "#FFFFFF",
-        });
-        const imgData = canvas.toDataURL("image/jpeg", 0.95);
-        const imgRatio = canvas.width / canvas.height;
-        let imgW = contentW;
-        let imgH = imgW / imgRatio;
-        if (imgH > pageH - margin * 2) {
-          imgH = pageH - margin * 2;
-          imgW = imgH * imgRatio;
-        }
-        const x = (pageW - imgW) / 2;
-        const y = (pageH - imgH) / 2;
-
-        if (idx > 0) pdf.addPage();
-        pdf.addImage(imgData, "JPEG", x, y, imgW, imgH, undefined, "FAST");
-      } catch (err) {
-        console.error("PDF generation error for ticket", ti, err);
-      }
+      const cat = event.categories?.find(c => c.id === ticket.categoryId);
+      const qrDataUrl = qrDataUrls[ticket.id];
+      await drawTicketOnPage(pdf, ticket, cat, qrDataUrl);
     }
 
     const blob = pdf.output("blob");
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    if (ticketIndex !== undefined) {
-      a.download = `${event.eventCode}-ticket-${String(ticketIndex + 1).padStart(2, "0")}.pdf`;
-    } else {
-      a.download = `${event.eventCode}-tickets.pdf`;
-    }
+    a.download = ticketIndex !== undefined
+      ? `${event.eventCode}-ticket-${String(ticketIndex + 1).padStart(2, "0")}.pdf`
+      : `${event.eventCode}-tickets.pdf`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -266,32 +400,10 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
     if (!ticket) return null;
 
     const pdf = new jsPDF("p", "mm", "a4");
-    const pageW = 210;
-    const pageH = 297;
-    const margin = 10;
-    const contentW = pageW - margin * 2;
-
-    const el = document.getElementById(`ticket-card-${ticket.id}`);
-    if (!el) return null;
-
-    try {
-      const canvas = await html2canvas(el, {
-        scale: 2, useCORS: true, allowTaint: true, backgroundColor: "#FFFFFF",
-      });
-      const imgData = canvas.toDataURL("image/jpeg", 0.95);
-      const imgRatio = canvas.width / canvas.height;
-      let imgW = contentW;
-      let imgH = imgW / imgRatio;
-      if (imgH > pageH - margin * 2) {
-        imgH = pageH - margin * 2;
-        imgW = imgH * imgRatio;
-      }
-      pdf.addImage(imgData, "JPEG", (pageW - imgW) / 2, (pageH - imgH) / 2, imgW, imgH, undefined, "FAST");
-      return pdf.output("blob");
-    } catch (err) {
-      console.error("PDF blob generation error", err);
-      return null;
-    }
+    const cat = event.categories?.find(c => c.id === ticket.categoryId);
+    const qrDataUrl = qrDataUrls[ticket.id];
+    await drawTicketOnPage(pdf, ticket, cat, qrDataUrl);
+    return pdf.output("blob");
   };
 
   const handleShareTicket = async (index: number) => {
@@ -326,7 +438,6 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
 
     return (
       <div
-        id={`ticket-card-${ticket.id}`}
         key={ticket.id}
         className={`bg-white ${standalone ? "" : "rounded-2xl shadow-lg border border-slate-200"} overflow-hidden`}
       >

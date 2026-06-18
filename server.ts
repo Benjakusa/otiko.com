@@ -418,8 +418,8 @@ app.patch("/api/events/:code", async (req, res) => {
   res.json(evt);
 });
 
-app.delete("/api/events/:code", (req, res) => {
-  const org = getOrganizerByToken(req);
+app.delete("/api/events/:code", async (req, res) => {
+  const org = await getOrganizerByToken(req);
   if (!org) {
     return res.status(401).json({ error: "Unauthorized" });
   }
@@ -442,8 +442,8 @@ app.delete("/api/events/:code", (req, res) => {
   res.json({ success: true, message: "Event cancelled successfully.", event: evt });
 });
 
-app.get("/api/events/:code/tickets", (req, res) => {
-  const org = getOrganizerByToken(req);
+app.get("/api/events/:code/tickets", async (req, res) => {
+  const org = await getOrganizerByToken(req);
   if (!org) {
     return res.status(401).json({ error: "Unauthorized" });
   }
@@ -477,7 +477,7 @@ app.get("/api/events/:code/tickets", (req, res) => {
 });
 
 // --- ORDERS & RESERVATIONS (ATOMIC DECREMENT LOGIC) ---
-app.post("/api/orders/reserve", (req, res) => {
+app.post("/api/orders/reserve", async (req, res) => {
   const { categoryId, quantity, buyerName, buyerPhone, buyerEmail } = req.body;
   const qty = Number(quantity);
 
