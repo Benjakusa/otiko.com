@@ -374,7 +374,7 @@ export default function PolicyPages({
                       <li>Resolve disputes and enforce our agreements</li>
                     </ul>
                     <p className="text-sm text-slate-600">
-                      Ticket and transaction records are retained for a minimum of <strong className="text-slate-900">[X years]</strong> for financial reconciliation and audit purposes.
+                      Ticket and transaction records are retained for a minimum of <strong className="text-slate-900">7 years</strong> for financial reconciliation and audit purposes.
                     </p>
                   </section>
 

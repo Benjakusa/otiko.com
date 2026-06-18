@@ -583,16 +583,39 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
 
         {/* STEP 2: PAYING */}
         {step === "paying" && order && (
-          <div className="p-6 sm:p-8 space-y-6">
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mb-5">
-                <Loader2 className="h-8 w-8 text-red-600 animate-spin" />
+          <div className="p-8 space-y-6">
+            <div className="flex flex-col items-center justify-center py-6 text-center space-y-4">
+              <div className="relative">
+                <Loader2 className="h-12 w-12 text-emerald-500 animate-spin" />
+                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-emerald-500 font-mono">
+                  M
+                </span>
               </div>
-              <h4 className="font-bold text-lg text-slate-900">Waiting for Payment</h4>
-              <p className="text-sm text-slate-500 max-w-sm mt-2">
-                A payment request of <span className="font-semibold text-slate-900">KES {order.totalAmount.toLocaleString()}</span> has been sent to <span className="font-mono text-slate-900">{order.buyerPhone}</span>. Enter your M-Pesa PIN to confirm.
+              
+              <div className="space-y-2">
+                <h4 className="font-bold text-lg text-white">Handset Verification Sent</h4>
+                <p className="text-xs text-neutral-400 max-w-sm leading-relaxed">
+                  A secure M-Pesa STK popup for <span className="font-extrabold text-white text-sm">KES {order.totalAmount.toLocaleString()}</span> has been sent to the phone <span className="font-mono text-emerald-400 font-semibold">{order.buyerPhone}</span>.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-neutral-950/60 border border-neutral-800 rounded-2xl p-5 space-y-3">
+              <div className="flex items-center gap-2.5 text-xs text-neutral-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
+                <span>Safeguarded Escrow Listening Active</span>
+              </div>
+              <p className="text-[11px] text-neutral-500 leading-relaxed">
+                Please unlock your mobile device and enter your M-Pesa PIN when prompted. Once authorized, your tickets will automatically unlock.
               </p>
-              <p className="text-xs text-slate-400 mt-4">Do not close this page. Your tickets will appear automatically once payment is confirmed.</p>
+              <div className="pt-2 border-t border-neutral-800 flex items-center justify-between text-[10px] text-neutral-500 font-mono">
+                <span>CHANNEL: M-PESA STK-PUSH</span>
+                <span>REF: {order.id.toUpperCase()}</span>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-center text-neutral-500 font-sans leading-normal">
+              Tickets are reserved for 5 minutes. Do not close this browser tab. Safaricom checkout transaction is verified automatically.
             </div>
           </div>
         )}
