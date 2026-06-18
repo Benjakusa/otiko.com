@@ -620,11 +620,6 @@ export default function App() {
               <span className="md:hidden lg:inline">Verification</span>
             </button>
           </nav>
-
-          {/* FOOTER ACCENTS */}
-          <div className="p-4 mt-auto border-t border-slate-800 bg-[#0c1222] md:hidden lg:block text-[10px] text-slate-500 text-center uppercase tracking-wider font-semibold">
-            SECURED ESCROW
-          </div>
         </aside>
       )}
 
@@ -995,87 +990,7 @@ export default function App() {
               </div>
 
               {/* SALES CHART - GRAPH REPRESENTATION */}
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-                      Sales & Volume Metrics (Past 7 Days Feed)
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      Daily gross transaction receipts calculated from secure ledger indexes.
-                    </p>
-                  </div>
-                  <div className="text-[10px] font-bold text-red-600 uppercase tracking-wider bg-red-50 px-2.5 py-1 rounded-lg">
-                    Real-time Callback active
-                  </div>
-                </div>
 
-                {/* GRAPH HEIGHT REPRESENTATION VIA SVG */}
-                <div className="h-60 w-full relative">
-                  {/* Grid background lines */}
-                  <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
-                    <div className="w-full border-t border-slate-100 py-1 flex justify-between text-[9px] font-mono text-slate-300">
-                      <span>100%</span>
-                    </div>
-                    <div className="w-full border-t border-slate-100 py-1 flex justify-between text-[9px] font-mono text-slate-300">
-                      <span>66%</span>
-                    </div>
-                    <div className="w-full border-t border-slate-300/40 py-1 flex justify-between text-[9px] font-mono text-slate-300">
-                      <span>33%</span>
-                    </div>
-                    <div className="w-full border-b border-slate-200"></div>
-                  </div>
-
-                  {/* Render Sales Columns */}
-                  <div className="absolute inset-x-0 bottom-4 top-4 flex items-end gap-3 px-8 z-10">
-                    {/* Compute sales stats dynamically */}
-                    {(() => {
-                      const dates = Array.from({ length: 7 }).map((_, idx) => {
-                        const d = new Date();
-                        d.setDate(d.getDate() - (6 - idx));
-                        return d.toISOString().split("T")[0];
-                      });
-                      const orgLedger = walletOverview?.ledger || [];
-                      const chartData = dates.map(dt => {
-                        const daySales = orgLedger
-                          .filter((item: any) => item.entryType === "sale" && item.createdAt.startsWith(dt))
-                          .reduce((sum: number, item: any) => sum + item.grossAmount, 0);
-                        const label = new Date(dt).toLocaleDateString("en-US", { weekday: "short", day: "numeric" });
-                        return { label, amount: daySales };
-                      });
-                      const maxVal = Math.max(...chartData.map(c => c.amount), 5000);
-
-                      return chartData.map((bar, i) => {
-                        const pct = (bar.amount / maxVal) * 100;
-                        return (
-                          <div key={i} className="flex-1 h-full flex flex-col justify-end items-center group relative">
-                            {/* Bar Tooltip on Hover */}
-                            <div className="absolute -top-10 opacity-0 group-hover:opacity-100 bg-slate-900 text-white text-[10px] font-bold font-mono py-1 px-2.5 rounded-lg tracking-tight pointer-events-none transition duration-200 z-30 shadow-md">
-                              KES {bar.amount.toLocaleString()}
-                            </div>
-
-                            <div 
-                              style={{ height: `${Math.max(5, pct)}%` }}
-                              className={`w-full max-w-[40px] rounded-t-xl transition-all duration-300 relative ${
-                                bar.amount > 0 
-                                  ? "bg-gradient-to-t from-red-600 to-red-400 group-hover:brightness-105" 
-                                  : "bg-slate-100 group-hover:bg-slate-200"
-                              }`}
-                            >
-                              {bar.amount > 0 && (
-                                <div className="absolute top-1 left-0 right-0 h-1 bg-white/20 rounded-full mx-1"></div>
-                              )}
-                            </div>
-                            <span className="text-[10px] font-extrabold text-slate-500 font-mono mt-2 select-none block shrink-0">
-                              {bar.label}
-                            </span>
-                          </div>
-                        );
-                      });
-                    })()}
-                  </div>
-                </div>
-              </div>
 
               {/* BOTTOM TWO COLUMNS METRICS */}
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
@@ -1832,33 +1747,29 @@ export default function App() {
               {/* CONFIRMATION OVERLAY: SOFT EVENT CANCELLATION */}
               {deletingEvent && (
                 <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 z-[95] animate-fade-in">
-                  <div className="bg-white rounded-2xl border border-rose-200 p-6 max-w-sm w-full space-y-4 animate-slide-up text-left shadow-2xl">
-                    <div className="flex gap-3 text-rose-600">
-                      <AlertTriangle className="h-6 w-6 shrink-0" />
-                      <div>
-                        <h4 className="font-extrabold text-slate-950 text-sm uppercase">Cancel Tickets Gate?</h4>
-                        <p className="text-[10px] text-rose-500 mt-0.5">WARNING: ACTION INITIATES INSTANT SALES TERMINATION</p>
-                      </div>
+                  <div className="bg-white rounded-2xl border border-slate-200 p-6 max-w-sm w-full space-y-4 animate-slide-up text-left shadow-2xl">
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-base">Cancel Event?</h4>
                     </div>
 
-                    <p className="text-xs text-slate-600 leading-normal font-sans">
-                      Are you sure you want to cancel <strong>{deletingEvent.name}</strong>? This will close ticket sales and mark the event as cancelled. Existing tickets remain valid.
+                    <p className="text-sm text-slate-600 leading-relaxed">
+                      Are you sure you want to cancel this event? Ticket sales will stop, but existing tickets will remain valid.
                     </p>
 
-                    <div className="flex justify-end gap-2 text-xs pt-2">
+                    <div className="flex justify-end gap-2 pt-1">
                       <button
                         type="button"
                         onClick={() => setDeletingEvent(null)}
-                        className="bg-slate-50 hover:bg-slate-100 border px-3.5 py-1.5 rounded-lg text-slate-650 font-bold transition cursor-pointer"
+                        className="bg-slate-50 hover:bg-slate-100 border border-slate-200 px-4 py-2 rounded-lg text-slate-700 font-semibold text-sm transition cursor-pointer"
                       >
-                        No, keep active
+                        Keep Active
                       </button>
                       <button
                         type="button"
                         onClick={handleDeleteEvent}
-                        className="bg-rose-650 hover:bg-rose-700 text-white px-4 py-1.5 rounded-lg font-bold transition shadow-sm cursor-pointer"
+                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition shadow-sm cursor-pointer"
                       >
-                        Cancel Event permanently
+                        Cancel Event
                       </button>
                     </div>
                   </div>

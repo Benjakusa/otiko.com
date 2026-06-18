@@ -173,14 +173,11 @@ export default function LoginPage({
         {/* Password and Forgot link */}
         <div className="space-y-1">
           <div className="flex items-center justify-between">
-            <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider">
-              Password
-            </label>
             {!submissionError && (
               <button
                 type="button"
                 onClick={onForgotPasswordNavigate}
-                className="text-[11px] font-bold text-red-650 hover:text-red-750 transition-colors focus:outline-none"
+                className="text-[11px] font-bold text-red-650 hover:text-red-750 transition-colors focus:outline-none ml-auto"
               >
                 Forgot password?
               </button>
