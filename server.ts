@@ -18,11 +18,18 @@ app.use(express.json());
 
 const TICKET_SECRET = process.env.TICKET_SECRET || "otiko-shared-signing-secret-2026";
 
-let ticketCounter = 0;
-
-function generateTicketNumber(eventCode: string): string {
-  ticketCounter++;
-  return `OTK-${eventCode}-${String(ticketCounter).padStart(5, "0")}`;
+function generateTicketNumber(): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let code: string;
+  let attempts = 0;
+  do {
+    code = "OTK-";
+    for (let i = 0; i < 6; i++) {
+      code += chars[crypto.randomInt(0, chars.length)];
+    }
+    attempts++;
+  } while (tickets.some(t => t.ticketNumber === code) && attempts < 20);
+  return code;
 }
 
 function generateVerificationCode(): string {
@@ -231,14 +238,6 @@ async function loadData() {
         orders = ordSnap.docs.map(d => ({ id: d.id, ...d.data() } as Order));
         const tktSnap = await firestore.collection("tickets").get();
         tickets = tktSnap.docs.map(d => ({ id: d.id, ...d.data() } as Ticket));
-        const maxCounter = tickets.reduce((max, t) => {
-          const tn = String(t.ticketNumber);
-          const parts = tn.split("-");
-          const last = parts[parts.length - 1];
-          const num = parseInt(last, 10);
-          return !isNaN(num) && num > max ? num : max;
-        }, 0);
-        ticketCounter = Math.max(ticketCounter, maxCounter);
         const ledSnap = await firestore.collection("ledgerEntries").get();
         ledgerEntries = ledSnap.docs.map(d => ({ id: d.id, ...d.data() } as LedgerEntry));
         const paySnap = await firestore.collection("payouts").get();
@@ -614,8 +613,7 @@ async function triggerSimulatedCallback(payload: any) {
 
     for (let i = 0; i < order.quantity; i++) {
       const ticketId = `tkt-${docId()}`;
-      const eventCode = event?.eventCode || "EVENT";
-      const ticketNumber = generateTicketNumber(eventCode);
+      const ticketNumber = generateTicketNumber();
       const verificationCode = generateVerificationCode();
       const ticket: Ticket = {
         id: ticketId, orderId: order.id, eventId: order.eventId,

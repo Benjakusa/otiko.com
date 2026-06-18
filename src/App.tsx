@@ -857,9 +857,6 @@ export default function App() {
 
                           <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
                             <div className="space-y-1.5">
-                              <span className="text-[10px] uppercase font-mono font-bold text-red-650 block">
-                                CODE: {evt.eventCode}
-                              </span>
                               <h4 className="font-bold text-slate-900 leading-tight block group-hover:text-red-600 transition">
                                 {evt.name}
                               </h4>
@@ -1129,9 +1126,6 @@ export default function App() {
                               <h5 className="text-xs font-bold text-slate-800 truncate leading-tight group-hover:text-red-650 transition">
                                 {evt.name}
                               </h5>
-                              <p className="text-[10px] font-mono text-slate-400 mt-1">
-                                Code: {evt.eventCode}
-                              </p>
                             </div>
                           </div>
                           
@@ -1738,7 +1732,7 @@ export default function App() {
                     <div className="flex justify-between items-center border-b border-slate-100 pb-3">
                       <div>
                         <h4 className="font-extrabold text-slate-900 text-sm uppercase">Modify Concert Specifications</h4>
-                        <p className="text-[11px] text-slate-400">Sequence Event: {editingEvent.eventCode}</p>
+                        <p className="text-[11px] text-slate-400">&nbsp;</p>
                       </div>
                       <button 
                         type="button"

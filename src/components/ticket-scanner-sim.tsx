@@ -19,13 +19,18 @@ export default function TicketScannerSim({ onClose }: TicketScannerSimProps) {
     setError(null);
     setScannedTicket(null);
 
-    // QR payload format: "ticketNumber:verificationCode|Event|Organizer|Type|Amount|Date|Otiko.com"
+    // QR payload is JSON: { ticketNumber, verificationCode, eventName, organizerName, eventDate, ticketType, amountPaid, brand }
     const raw = ticketInput.trim();
-    const pipeParts = raw.split("|");
-    const creds = pipeParts[0] || raw;
-    const colonIdx = creds.indexOf(":");
-    const ticketNumber = colonIdx >= 0 ? creds.slice(0, colonIdx) : creds;
-    const verificationCode = colonIdx >= 0 ? creds.slice(colonIdx + 1) : "";
+    let ticketNumber = raw;
+    let verificationCode = "";
+
+    try {
+      const parsed = JSON.parse(raw);
+      ticketNumber = parsed.ticketNumber || raw;
+      verificationCode = parsed.verificationCode || "";
+    } catch {
+      // fallback: treat raw input as ticket number
+    }
 
     try {
       const response = await fetch(`/api/tickets/verify`, {
@@ -76,7 +81,7 @@ export default function TicketScannerSim({ onClose }: TicketScannerSimProps) {
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="e.g. OTK-EVENT-00001:a1b2c3d4"
+                  placeholder='e.g. {"ticketNumber":"OTK-6A9F3K","verificationCode":"a1b2c3d4"}'
                   value={ticketInput}
                   onChange={(e) => setTicketInput(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono placeholder:text-slate-400 focus:outline-none transition"

@@ -113,15 +113,16 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
       const displayDate = new Date(event.eventDate).toLocaleDateString("en-US", {
         year: "numeric", month: "short", day: "numeric",
       });
-      const payload = [
-        `${t.ticketNumber}:${t.verificationCode || ""}`,
-        event.name,
+      const payload = JSON.stringify({
+        ticketNumber: t.ticketNumber,
+        verificationCode: t.verificationCode || "",
+        eventName: event.name,
         organizerName,
-        cat?.name || "General",
-        `KES ${cat?.price.toLocaleString() || "—"}`,
-        displayDate,
-        "Powered by Otiko.com",
-      ].join("|");
+        eventDate: displayDate,
+        ticketType: cat?.name || "General",
+        amountPaid: `KES ${cat?.price?.toLocaleString() || "—"}`,
+        brand: "Powered by Otiko.com"
+      });
       try {
         urls[t.id] = await QRCodeLib.toDataURL(payload, {
           width: 300,
