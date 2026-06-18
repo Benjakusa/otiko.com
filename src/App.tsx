@@ -3,27 +3,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { 
   Building, Calendar, MapPin, Ticket as TicketIcon, Phone, Mail, 
   User, CheckCircle2, AlertTriangle, Loader2, RefreshCw, X, Download, QrCode,
   TrendingUp, Wallet, ShieldCheck, Settings, Plus, Landmark, BarChart3, 
-  Layers, Lock, Database, Search, ArrowRight, ScanLine, Clock, Cpu, 
-  HelpCircle, Receipt, ExternalLink, HelpCircle as HelpIcon, Sparkles, Menu
+  Layers, Search, ArrowRight, ExternalLink, LogOut, Menu
 } from "lucide-react";
 import { Event, Order, Ticket, LedgerEntry, Payout, Organizer } from "./types";
 import PublicBuyFlow from "./components/public-buy-flow";
-import TicketScannerSim from "./components/ticket-scanner-sim";
 import SignupPage from "./components/auth/SignupPage";
 import LoginPage from "./components/auth/LoginPage";
 import ForgotPasswordPage from "./components/auth/ForgotPasswordPage";
 import PublicFooter from "./components/PublicFooter";
 import PolicyPages, { PolicySection } from "./components/policies/PolicyPages";
+import UserDashboard from "./pages/UserDashboard";
+import AdminDashboard from "./components/AdminDashboard";
 
 export default function App() {
   // Navigation Tabs state
-  // "public" | "dashboard" | "events" | "wallet" | "kyc" | "login" | "signup" | "forgot-password" | "policies"
-  const [activeTab, setActiveTab] = useState<"public" | "dashboard" | "events" | "wallet" | "kyc" | "login" | "signup" | "forgot-password" | "policies">("public");
+  // "public" | "dashboard" | "events" | "wallet" | "kyc" | "admin" | "login" | "signup" | "forgot-password" | "policies"
+  const [activeTab, setActiveTab] = useState<"public" | "dashboard" | "events" | "wallet" | "kyc" | "admin" | "login" | "signup" | "forgot-password" | "policies">("public");
   const [activePolicyTab, setActivePolicyTab] = useState<PolicySection>("refund");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
@@ -40,12 +40,43 @@ export default function App() {
     localStorage.setItem("otiko_auth_token", token);
   }, [token]);
 
+  const [showAdminLogin, setShowAdminLogin] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [adminLoginError, setAdminLoginError] = useState("");
+
+  const handleAdminLogin = useCallback((e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminLoginError("");
+    if (adminPassword === "otiko2025") {
+      setToken("admin-token-2026");
+      setActiveTab("admin");
+      setShowAdminLogin(false);
+      setAdminPassword("");
+    } else {
+      setAdminLoginError("Invalid admin password");
+    }
+  }, [adminPassword]);
+
+  // Guard: redirect unauthenticated users to login when accessing restricted tabs
+  const restrictedTabs = ["dashboard", "events", "wallet", "kyc", "admin"];
+  useEffect(() => {
+    if (restrictedTabs.includes(activeTab) && token === "user-default-uid") {
+      const checkAuth = async () => {
+        const res = await fetch("/api/organizers/me", {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (!res.ok) {
+          setActiveTab("login");
+        }
+      };
+      checkAuth();
+    }
+  }, [activeTab, token]);
 
   // App data state
   const [events, setEvents] = useState<Event[]>([]);           // Public buyer portal (all active events)
   const [organizerEvents, setOrganizerEvents] = useState<Event[]>([]); // Organizer workspace (own events only — ISOLATED)
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
-  const [showScanner, setShowScanner] = useState(false);
   const [loading, setLoading] = useState(false);
   
   // Organizer details
@@ -59,6 +90,8 @@ export default function App() {
   const [newEventVenue, setNewEventVenue] = useState("");
   const [newEventDesc, setNewEventDesc] = useState("");
   const [newEventFlyer, setNewEventFlyer] = useState("");
+  const [newEventFlyerPreview, setNewEventFlyerPreview] = useState<string | null>(null);
+  const [newEventFlyerUploading, setNewEventFlyerUploading] = useState(false);
   const [newEventCategories, setNewEventCategories] = useState([
     { name: "Regular Admission", price: "1500", totalQuantity: "1000" },
     { name: "VIP Experience", price: "4000", totalQuantity: "250" }
@@ -159,6 +192,27 @@ export default function App() {
   };
 
   // Handler: POST Event creation
+  const handleNewEventImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const allowed = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowed.includes(file.type)) { alert("Invalid format. Accepted: JPG, JPEG, PNG, WEBP"); return; }
+    if (file.size > 10 * 1024 * 1024) { alert("File too large. Max 10MB."); return; }
+    const reader = new FileReader();
+    reader.onload = () => setNewEventFlyerPreview(reader.result as string);
+    reader.readAsDataURL(file);
+    const formData = new FormData();
+    formData.append("image", file);
+    setNewEventFlyerUploading(true);
+    try {
+      const res = await fetch("/api/upload/image", { method: "POST", headers: { "Authorization": `Bearer ${token}` }, body: formData });
+      const data = await res.json();
+      if (res.ok) { setNewEventFlyer(data.url); setNewEventFlyerPreview(null); }
+      else { alert(data.error || "Upload failed"); }
+    } catch { alert("Image upload failed"); }
+    finally { setNewEventFlyerUploading(false); }
+  };
+
   const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newEventName || !newEventDate || !newEventVenue) {
@@ -281,21 +335,6 @@ export default function App() {
     return matchesSearch && evt.status === selectedStatusFilter;
   });
 
-  // Hot reservations real-time stats simulated
-  const mockReservationMinuteBars = [
-    { label: "50m ago", val: 12, redis: true },
-    { label: "45m ago", val: 18, redis: true },
-    { label: "40m ago", val: 24, redis: true },
-    { label: "35m ago", val: 40, redis: true },
-    { label: "30m ago", val: 68, redis: true },
-    { label: "25m ago", val: 89, redis: true },
-    { label: "20m ago", val: 135, redis: true },
-    { label: "15m ago", val: 215, redis: true },
-    { label: "10m ago", val: 480, redis: true, surge: true },
-    { label: "5m ago", val: 860, redis: true, surge: true },
-    { label: "Now", val: 1150, redis: true, surge: true },
-  ];
-
   if (activeTab === "login") {
     return (
       <LoginPage
@@ -316,9 +355,9 @@ export default function App() {
       <SignupPage
         onBackToHome={() => setActiveTab("public")}
         onLoginNavigate={() => setActiveTab("login")}
-        onSignupSuccess={(organizerData) => {
+        onSignupSuccess={(organizerData, idToken) => {
           setOrganizer(organizerData);
-          setToken(organizerData.firebaseUid || "user-default-uid");
+          setToken(idToken || organizerData.firebaseUid || "user-default-uid");
           setActiveTab("dashboard");
         }}
       />
@@ -355,128 +394,84 @@ export default function App() {
         />
       )}
 
-      {/* 1. SIDEBAR NAVIGATION - MATCHES CLEAN MINIMALISM LAYOUT (ONLY ON WORKSPACE TABS) */}
+      {/* 1. SIDEBAR NAVIGATION */}
       {!["public", "login", "signup", "forgot-password", "policies"].includes(activeTab) && (
-        <aside className={`bg-[#0F172A] flex flex-col h-full border-r border-slate-800 shrink-0 text-slate-300 transition-all duration-300 z-50
+        <aside className={`bg-white flex flex-col h-full border-r border-slate-200 shrink-0 text-slate-700 transition-all duration-300 z-50
           fixed inset-y-0 left-0 w-64 md:relative md:inset-auto md:translate-x-0
           ${mobileSidebarOpen ? "translate-x-0 animate-fade-in" : "-translate-x-full"}
           md:w-20 lg:w-64`}
         >
-          
           {/* BRAND HEADER */}
-          <div className="p-6 flex items-center justify-center lg:justify-start gap-3 border-b border-slate-800/60 pb-5">
+          <div className="p-6 flex items-center justify-center lg:justify-start gap-3 border-b border-slate-100 pb-5">
             <div className="w-8 h-8 bg-red-650 rounded flex items-center justify-center font-bold text-white text-base shrink-0">
               O
             </div>
             <div className="md:hidden lg:block">
-              <h1 className="text-lg font-bold text-white tracking-tight leading-none">Otiko<span className="text-red-500">.com</span></h1>
-              <span className="text-[9px] uppercase tracking-wider text-slate-400 block mt-1">Safaricom Direct</span>
+              <h1 className="text-lg font-bold text-slate-900 tracking-tight leading-none">Otiko<span className="text-red-500">.com</span></h1>
+              <span className="text-[9px] uppercase tracking-wider text-slate-400 block mt-1">Organizer</span>
             </div>
           </div>
 
-          {/* TABS SELECTION NAV */}
+          {/* NAVIGATION */}
           <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-            
-            <div className="px-3 mb-2 md:text-center lg:text-left">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest md:hidden lg:inline">Buyer Viewports</span>
-            </div>
-            <button 
-              onClick={() => setActiveTab("public")} 
+            <button
+              onClick={() => setActiveTab("dashboard")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all md:justify-center lg:justify-start ${
-                activeTab === "public" 
-                  ? "bg-slate-800 text-white shadow-sm font-semibold" 
-                  : "text-slate-400 hover:text-white hover:bg-slate-800/40"
+                activeTab === "dashboard"
+                  ? "bg-slate-100 text-slate-900 shadow-sm font-semibold"
+                  : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
               }`}
-              title="otiko.com (Public)"
             >
-              <Search className="h-4 w-4 text-red-500 shrink-0" />
-              <span className="md:hidden lg:inline">otiko.com (Public)</span>
+              <BarChart3 className="h-4 w-4 shrink-0" />
+              <span className="md:hidden lg:inline">Overview</span>
             </button>
 
-            <div className="px-3 pt-6 mb-2 md:text-center lg:text-left">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest md:hidden lg:inline">Organizer Workspace</span>
-            </div>
-
-            <button 
-              onClick={() => setActiveTab("dashboard")} 
+            <button
+              onClick={() => setActiveTab("events")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all md:justify-center lg:justify-start ${
-                activeTab === "dashboard" 
-                  ? "bg-slate-800 text-white shadow-sm font-semibold" 
-                  : "text-slate-400 hover:text-white hover:bg-slate-800/40"
+                activeTab === "events"
+                  ? "bg-slate-100 text-slate-900 shadow-sm font-semibold"
+                  : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
               }`}
-              title="Dashboard Core"
             >
-              <BarChart3 className="h-4 w-4 text-slate-400 shrink-0" />
-              <span className="md:hidden lg:inline">Dashboard Core</span>
+              <Layers className="h-4 w-4 shrink-0" />
+              <span className="md:hidden lg:inline">Events</span>
             </button>
 
-            <button 
-              onClick={() => setActiveTab("events")} 
+            <button
+              onClick={() => setActiveTab("wallet")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all md:justify-center lg:justify-start ${
-                activeTab === "events" 
-                  ? "bg-slate-800 text-white shadow-sm font-semibold" 
-                  : "text-slate-400 hover:text-white hover:bg-slate-800/40"
+                activeTab === "wallet"
+                  ? "bg-slate-100 text-slate-900 shadow-sm font-semibold"
+                  : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
               }`}
-              title="Manage Events"
             >
-              <Layers className="h-4 w-4 text-slate-400 shrink-0" />
-              <span className="md:hidden lg:inline">Manage Events</span>
+              <Wallet className="h-4 w-4 shrink-0" />
+              <span className="md:hidden lg:inline">Payment</span>
             </button>
 
-            <button 
-              onClick={() => setActiveTab("wallet")} 
+            <button
+              onClick={() => setActiveTab("kyc")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all md:justify-center lg:justify-start ${
-                activeTab === "wallet" 
-                  ? "bg-slate-800 text-white shadow-sm font-semibold" 
-                  : "text-slate-400 hover:text-white hover:bg-slate-800/40"
+                activeTab === "kyc"
+                  ? "bg-slate-100 text-slate-900 shadow-sm font-semibold"
+                  : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
               }`}
-              title="Wallet & Balance"
             >
-              <Wallet className="h-4 w-4 text-slate-400 shrink-0" />
-              <span className="md:hidden lg:inline">Wallet & Balance</span>
+              <ShieldCheck className="h-4 w-4 shrink-0" />
+              <span className="md:hidden lg:inline">Verification</span>
             </button>
-
-            <button 
-              onClick={() => setActiveTab("kyc")} 
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all md:justify-center lg:justify-start ${
-                activeTab === "kyc" 
-                  ? "bg-slate-800 text-white shadow-sm font-semibold" 
-                  : "text-slate-400 hover:text-white hover:bg-slate-800/40"
-              }`}
-              title="KYC Verification"
-            >
-              <ShieldCheck className="h-4 w-4 text-slate-400 shrink-0" />
-              <span className="md:hidden lg:inline">KYC Verification</span>
-            </button>
-
-            {/* GATE VALIDATOR MANUAL LAUNCHER */}
-            <div className="pt-6 px-1 lg:px-3">
-              <button
-                onClick={() => setShowScanner(true)}
-                className="w-full bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 hover:border-emerald-500/40 text-emerald-400 text-xs font-semibold py-2.5 px-2 rounded-lg flex items-center justify-center gap-2 transition cursor-pointer"
-                title="Scan Ticket QR"
-              >
-                <ScanLine className="h-4 w-4 shrink-0" />
-                <span className="md:hidden lg:inline">Scan Ticket QR</span>
-              </button>
-            </div>
           </nav>
 
-          {/* SYSTEM STATUS WIDGET */}
-          <div className="p-4 mt-auto border-t border-slate-800 bg-[#0c1222] md:hidden lg:block text-slate-400">
-            <div className="flex items-center gap-3 px-3 py-1 text-slate-500 text-[10px] uppercase tracking-widest font-bold">
-              System Status
-            </div>
-            <div className="px-3 py-2">
-              <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Operational Mode
-              </div>
-              <div className="flex justify-between items-center mt-1.5">
-                <p className="text-[9px] text-slate-500 uppercase">API Latency: 42ms</p>
-                <p className="text-[9px] text-orange-500 uppercase font-mono">REDIS ACTIVE</p>
-              </div>
-            </div>
+          {/* LOGOUT */}
+          <div className="p-4 mt-auto border-t border-slate-100">
+            <button
+              onClick={() => { setToken("user-default-uid"); setActiveTab("public"); }}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 transition-all md:justify-center lg:justify-start"
+            >
+              <LogOut className="h-4 w-4 shrink-0" />
+              <span className="md:hidden lg:inline">Logout</span>
+            </button>
           </div>
         </aside>
       )}
@@ -511,11 +506,18 @@ export default function App() {
                 0722839617
               </span>
 
+              {/* Admin login link */}
+              <button
+                onClick={() => setShowAdminLogin(true)}
+                className="text-xs font-semibold text-slate-500 hover:text-red-600 border border-slate-200 hover:border-red-300 px-3 py-1.5 rounded-lg transition cursor-pointer"
+                title="Admin Login"
+              >
+                Admin
+              </button>
+
               {/* Profile icon to open event organizers sign-up/sign-in portal */}
               <button
-                onClick={() => {
-                  setActiveTab("login");
-                }}
+                onClick={() => setActiveTab("login")}
                 className="w-9 h-9 rounded-full bg-[#0F172A] hover:bg-red-650 hover:scale-105 active:scale-95 text-white flex items-center justify-center transition shadow-sm cursor-pointer"
                 title="Event Organizer Workspace"
               >
@@ -526,7 +528,6 @@ export default function App() {
         ) : (
           <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-8 flex items-center justify-between shadow-sm shrink-0 z-10">
             <div className="flex items-center gap-3">
-              {/* Mobile hamburger menu toggle */}
               <button
                 onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
                 className="p-2 -ml-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 md:hidden transition cursor-pointer"
@@ -535,12 +536,8 @@ export default function App() {
                 <Menu className="h-5 w-5" />
               </button>
 
-              <h2 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-1.5 select-none">
-                <span className="xs:hidden sm:inline">Otiko Workspace</span>
-                <span className="sm:hidden">Workspace</span>
-                <span className="text-slate-400 font-normal text-xs ml-2 hidden lg:inline">
-                  / admin.otiko.com
-                </span>
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 select-none">
+                {organizer?.name || "Organizer"}
               </h2>
             </div>
 
@@ -553,16 +550,7 @@ export default function App() {
                 <span className="hidden xs:inline">Exit Workspace</span>
               </button>
 
-              <div className="text-right hidden sm:block">
-                <p className="text-xs font-bold text-slate-900 leading-tight">{organizer?.businessName || "Solfest Ltd"}</p>
-                <p className="text-[10px] text-emerald-600 font-semibold uppercase flex items-center justify-end gap-1 mt-0.5">
-                  KYC STATUS: {organizer?.kycStatus === "verified" ? "Verified ✓" : "Pending Approval ◷"}
-                </p>
-              </div>
-              
-              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#0F172A] text-white flex items-center justify-center font-bold text-xs shadow-sm">
-                SF
-              </div>
+
             </div>
           </header>
         )}
@@ -582,7 +570,7 @@ export default function App() {
                     Discover. Book. Attend.
                   </h1>
                   <p className="text-xs text-slate-300 leading-relaxed">
-                    The easiest way to find and buy tickets to events near you.
+                    The easiest way to find and buy tickets to events across Kenya.
                   </p>
 
                   {/* ACTIVE SEARCH FILTERS */}
@@ -762,294 +750,17 @@ export default function App() {
             </div>
           )}
 
-          {/* ==================================== TAB 2: ORGANIZER DASHBOARD CORE ==================================== */}
+          {/* TAB 2: ORGANIZER DASHBOARD */}
           {activeTab === "dashboard" && (
-            <div className="space-y-8 animate-fade-in">
-              
-              {/* SUB HEADER INTRO */}
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                  <h3 className="text-xl font-bold text-slate-900">Platform Performance</h3>
-                  <p className="text-xs text-slate-500">Atomic inventory and Safaricom callback status check.</p>
-                </div>
-                
-                <button
-                  onClick={() => setShowAddEvent(true)}
-                  className="bg-red-600 hover:bg-red-500 text-white text-xs font-semibold py-2.5 px-4 rounded-xl flex items-center gap-1.5 transition shadow-sm"
-                >
-                  <Plus className="h-4 w-4" /> Create New Event
-                </button>
-              </div>
-
-              {/* 4 CORE METRIC CARDS */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-                  <div className="flex justify-between items-start">
-                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                      Total Tickets Sold
-                    </p>
-                    <TicketIcon className="h-4 w-4 text-slate-400" />
-                  </div>
-                  <p className="text-2xl font-bold mt-1 text-slate-900">
-                    {walletOverview?.ledger ? walletOverview.payouts.length + 3122 : 3122}
-                  </p>
-                  <div className="text-xs text-emerald-600 font-medium mt-2 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
-                    +12.4% vs last week
-                  </div>
-                </div>
-
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-                  <div className="flex justify-between items-start">
-                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                      Gross Collected Receipts
-                    </p>
-                    <TrendingUp className="h-4 w-4 text-slate-400" />
-                  </div>
-                  <p className="text-2xl font-bold mt-1 text-slate-900 font-mono">
-                    KES {walletOverview?.grossCollected ? walletOverview.grossCollected.toLocaleString() : "12,000"}
-                  </p>
-                  <div className="text-[10px] text-slate-400 font-mono mt-2 uppercase">
-                    Platform Fees Paid: KES {walletOverview?.platformFees || "600"}
-                  </div>
-                </div>
-
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-                  <div className="flex justify-between items-start">
-                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                      Active Reservations
-                    </p>
-                    <Clock className="h-4 w-4 text-red-500" />
-                  </div>
-                  <p className="text-2xl font-bold mt-1 text-slate-900">
-                    8,402
-                  </p>
-                  <div className="flex items-center gap-1.5 mt-2">
-                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-                    <span className="text-[11px] text-red-600 font-semibold uppercase">High Traffic Window</span>
-                  </div>
-                </div>
-
-                <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-                  <div className="flex justify-between items-start">
-                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                      M-Pesa Conv. Rate
-                    </p>
-                    <Cpu className="h-4 w-4 text-emerald-500" />
-                  </div>
-                  <p className="text-2xl font-bold mt-1 text-slate-900">
-                    98.2%
-                  </p>
-                  <div className="text-[10px] text-emerald-600 font-bold mt-2 uppercase bg-emerald-50 px-2 py-0.5 rounded-md inline-block">
-                    Webhook Success: 100%
-                  </div>
-                </div>
-              </div>
-
-              {/* MAIN METRIC GRAPH - RESERVATIONS PER MINUTE */}
-              <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6 flex flex-col">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">
-                      Safe High-Load Reservations / Minute Capacity Simulation
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Tested spikes simulating up to 100,000 reservations globally without double-booking.
-                    </p>
-                  </div>
-                  
-                  <div className="flex gap-4 text-[10px] font-bold uppercase tracking-wider">
-                    <div className="flex items-center gap-1.5 text-slate-700">
-                      <span className="w-2.5 h-2.5 bg-slate-400 rounded-sm"></span>
-                      POSTGRES DB ID
-                    </div>
-                    <div className="flex items-center gap-1.5 text-red-600">
-                      <span className="w-2.5 h-2.5 bg-red-600 rounded-sm"></span>
-                      REDIS DECR LOCKS
-                    </div>
-                  </div>
-                </div>
-
-                {/* GRAPH HEIGHT REPRESENTATION */}
-                <div className="h-64 flex items-end gap-2.5 border-b border-slate-100 pb-5 mb-5 px-3">
-                  {mockReservationMinuteBars.map((bar, i) => {
-                    const pct = Math.min(100, (bar.val / 1150) * 100);
-                    return (
-                      <div key={i} className="flex-1 flex flex-col items-center gap-2 group relative">
-                        {/* Hover values tooltip */}
-                        <div className="absolute -top-10 opacity-0 group-hover:opacity-100 bg-slate-900 text-white text-[10px] font-mono py-1 px-2 rounded tracking-tight pointer-events-none transition duration-150 z-20 shadow">
-                          {bar.val} req/s
-                        </div>
-
-                        <div 
-                          style={{ height: `${pct}%` }}
-                          className={`w-full rounded-t-md transition-all duration-500 relative ${
-                            bar.surge 
-                              ? "bg-gradient-to-t from-red-600 to-red-400" 
-                              : "bg-slate-300 group-hover:bg-slate-400"
-                          }`}
-                        >
-                          {bar.surge && (
-                            <div className="absolute top-0 left-0 w-full h-1 bg-white rounded-t-md opacity-60"></div>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-slate-400 font-mono font-bold shrink-0">{bar.label}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-xs leading-relaxed text-slate-500">
-                  <div className="space-y-1">
-                    <h5 className="font-bold text-slate-800 flex items-center gap-1.5">
-                      <Cpu className="h-4 w-4 text-red-500" />
-                      Hot-Event Redis Counter Synchronization
-                    </h5>
-                    <p className="text-[11px]">
-                      High-demand categories are mirrored into memory on Cloud MemoryStore/Redis. Clients hit <code>DECR</code> on Redis first before entering postgres transaction, preventing scale lock-contention.
-                    </p>
-                  </div>
-                  <div className="space-y-1">
-                    <h5 className="font-bold text-slate-800 flex items-center gap-1.5">
-                      <Database className="h-4 w-4 text-indigo-500" />
-                      Atomic Multi-Seat Decrement Rule
-                    </h5>
-                    <p className="text-[11px]">
-                      Executed via single raw database check: <code>UPDATE ticket_categories SET remaining = remaining - N WHERE id = X AND remaining &gt;= N</code>. No server-side thread mutex locking is needed.
-                    </p>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* BOTTOM TWO COLUMNS METRICS */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
-                {/* 1. INFRASTRUCTURE SYSTEMS CHECKLIST */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 lg:col-span-1 space-y-4">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Subsystem Infrastructure
-                  </h4>
-
-                  <div className="space-y-3 font-mono text-xs text-slate-700">
-                    <div className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
-                      <span className="text-[10px] text-slate-500 font-bold uppercase font-sans">PgBouncer Active Pool</span>
-                      <span className="text-xs font-bold font-mono text-slate-800 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded">
-                        142 / 200
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
-                      <span className="text-[10px] text-slate-500 font-bold uppercase font-sans">M-Pesa Webhook</span>
-                      <span className="text-xs font-bold font-mono text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded">
-                        HEALTHY
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
-                      <span className="text-[10px] text-slate-500 font-bold uppercase font-sans">Celery Sweeper Lag</span>
-                      <span className="text-xs font-bold font-mono text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded">
-                        0.1s lagging
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between items-center p-3 bg-slate-50 rounded-lg">
-                      <span className="text-[10px] text-slate-500 font-bold uppercase font-sans">GCS Ticket Backups</span>
-                      <span className="text-xs font-bold font-mono text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
-                        1.4 GB
-                      </span>
-                    </div>
-                  </div>
-
-                  <p className="text-[10px] text-slate-400 text-center leading-normal">
-                    Dockerized micro-compose automatically partitions load patterns globally. Configured for autoscale in Cloud Run.
-                  </p>
-                </div>
-
-                {/* 2. RECENT COMPILATION TRANSACTIONS / ORDERS */}
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 lg:col-span-2 space-y-4">
-                  <div className="flex justify-between items-center">
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                      Ledger Order Activities
-                    </h4>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase">Live Updates</span>
-                  </div>
-
-                  <div className="space-y-1 overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse min-w-[500px] md:min-w-0">
-                      <thead>
-                        <tr className="border-b border-slate-100 text-slate-400 font-semibold uppercase text-[10px]">
-                          <th className="py-2">Attendee / Buyer</th>
-                          <th className="py-2">Tickets</th>
-                          <th className="py-2">Amount Paid</th>
-                          <th className="py-2 text-right">Status State</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-50 text-slate-700">
-                        {loading ? (
-                          Array.from({ length: 3 }).map((_, idx) => (
-                            <tr key={`ledger-order-skeleton-${idx}`}>
-                              <td className="py-3">
-                                <div className="h-4 shimmer-bg rounded w-28"></div>
-                              </td>
-                              <td className="py-3">
-                                <div className="h-4 shimmer-bg rounded w-32"></div>
-                              </td>
-                              <td className="py-3">
-                                <div className="h-4 shimmer-bg rounded w-20"></div>
-                              </td>
-                              <td className="py-3 text-right">
-                                <div className="inline-block h-5 shimmer-bg rounded w-16"></div>
-                              </td>
-                            </tr>
-                          ))
-                        ) : (
-                          <>
-                            <tr className="hover:bg-slate-50/50">
-                              <td className="py-3 font-semibold text-slate-900">Kamau Njoroge</td>
-                              <td className="py-3 text-slate-500">2 × VIP Lounge</td>
-                              <td className="py-3 font-mono font-semibold">KES 12,000</td>
-                              <td className="py-3 text-right">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-100 inline-block uppercase">
-                                  PAID
-                                </span>
-                              </td>
-                            </tr>
-                            <tr className="hover:bg-slate-50/50">
-                              <td className="py-3 font-semibold text-slate-900">Sarah Wanjiru</td>
-                              <td className="py-3 text-slate-500">4 × General Admission</td>
-                              <td className="py-3 font-mono font-semibold">KES 14,000</td>
-                              <td className="py-3 text-right">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-600 border border-amber-100 inline-block uppercase">
-                                  PENDING
-                                </span>
-                              </td>
-                            </tr>
-                            <tr className="hover:bg-slate-50/50 text-slate-400">
-                              <td className="py-3 font-semibold text-slate-500">John Amolo</td>
-                              <td className="py-3">1 × Golden Circle</td>
-                              <td className="py-3 font-mono">KES 15,000</td>
-                              <td className="py-3 text-right">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-600 border border-rose-100 inline-block uppercase">
-                                  EXPIRED
-                                </span>
-                              </td>
-                            </tr>
-                          </>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <p className="text-[10px] text-slate-400 leading-normal bg-slate-50 p-3 rounded-lg border border-slate-100 font-sans">
-                    <strong>Note:</strong> Completed transactions are immediately pushed into the append-only Ledger ledger file. Update or edit requests to past payments is restricted on the Postgres schema role level.
-                  </p>
-                </div>
-
-              </div>
-
-            </div>
+            <UserDashboard
+              organizer={organizer}
+              events={organizerEvents}
+              walletOverview={walletOverview}
+              loading={loading}
+              onRefresh={fetchData}
+              onLogout={() => { setToken("user-default-uid"); setActiveTab("public"); }}
+              onSelectEvent={(evt) => setSelectedEvent(evt)}
+            />
           )}
 
           {/* ==================================== TAB 3: MANAGE EVENTS & NEW EVENT FORM ==================================== */}
@@ -1058,8 +769,8 @@ export default function App() {
               
               <div className="flex justify-between items-center">
                 <div>
-                  <h3 className="text-xl font-bold text-slate-900">Registered Events Vault</h3>
-                  <p className="text-xs text-slate-500">Edit ticket allocations or add category passes.</p>
+                  <h3 className="text-xl font-bold text-slate-900">Events</h3>
+                  <p className="text-xs text-slate-500">Manage your events and ticket categories.</p>
                 </div>
 
                 <button
@@ -1074,13 +785,13 @@ export default function App() {
               {showAddEvent && (
                 <form onSubmit={handleCreateEvent} className="bg-white rounded-xl border border-slate-200/80 p-6 space-y-6 animate-slide-up">
                   <div className="border-b border-slate-100 pb-3">
-                    <h4 className="font-bold text-slate-900 text-sm uppercase">Generate Official Ticket Pass Release Form</h4>
-                    <p className="text-xs text-slate-400 mt-1">This registers event criteria on database sequence codes.</p>
+                    <h4 className="font-bold text-slate-900 text-sm uppercase">New Event</h4>
+                    <p className="text-xs text-slate-400 mt-1">Fill in the details to create a new event.</p>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2">
-                      <label className="block text-xs font-bold text-slate-700 uppercase">Event Title Name</label>
+                      <label className="block text-xs font-bold text-slate-700 uppercase">Event Name</label>
                       <input
                         type="text"
                         required
@@ -1092,7 +803,7 @@ export default function App() {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="block text-xs font-bold text-slate-700 uppercase">Concert Date / Timing</label>
+                      <label className="block text-xs font-bold text-slate-700 uppercase">Date & Time</label>
                       <input
                         type="datetime-local"
                         required
@@ -1103,7 +814,7 @@ export default function App() {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="block text-xs font-bold text-slate-700 uppercase">Venue Physical Location</label>
+                      <label className="block text-xs font-bold text-slate-700 uppercase">Venue</label>
                       <input
                         type="text"
                         required
@@ -1115,19 +826,17 @@ export default function App() {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="block text-xs font-bold text-slate-700 uppercase">Poster Image Link Url</label>
-                      <input
-                        type="url"
-                        placeholder="e.g. https://images.unsplash.com/photo-..."
-                        value={newEventFlyer}
-                        onChange={(e) => setNewEventFlyer(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white rounded-lg px-4 py-2.5 text-xs text-slate-800 focus:outline-none transition font-mono"
-                      />
+                      <label className="block text-xs font-bold text-slate-700 uppercase">Flyer Image</label>
+                      <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleNewEventImage}
+                        className="w-full text-xs file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer" />
+                      {newEventFlyerUploading && <div className="flex items-center gap-2 text-xs text-slate-500 mt-1"><Loader2 className="h-3 w-3 animate-spin" /> Uploading...</div>}
+                      {newEventFlyerPreview && <img src={newEventFlyerPreview} alt="Preview" className="mt-2 h-32 w-full object-cover rounded-lg border border-slate-200" />}
+                      {newEventFlyer && !newEventFlyerPreview && !newEventFlyerUploading && <div className="text-[10px] text-emerald-600 mt-1">Image uploaded ✓</div>}
                     </div>
                   </div>
 
                   <div className="space-y-2">
-                    <label className="block text-xs font-bold text-slate-700 uppercase">Concert Description Notes</label>
+                      <label className="block text-xs font-bold text-slate-700 uppercase">Description</label>
                     <textarea
                       placeholder="Specify important age limitations, parking structures, and list main African artists."
                       rows={3}
@@ -1141,14 +850,14 @@ export default function App() {
                   <div className="space-y-4">
                     <div className="flex justify-between items-center border-t border-slate-100 pt-5">
                       <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide">
-                        Allocated Ticket Ranges / Prices (Numeric Decimal core)
+                        Ticket Categories
                       </label>
                       <button
                         type="button"
                         onClick={addCategoryRow}
                         className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 text-xs py-1.5 px-3 rounded-lg flex items-center gap-1 transition"
                       >
-                        + Add Category Pass Group
+                        + Add Category
                       </button>
                     </div>
 
@@ -1232,7 +941,7 @@ export default function App() {
                       type="submit"
                       className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold py-2.5 px-6 rounded-lg transition"
                     >
-                      Compile & Active Tickets Sale
+                      Create Event & Activate Tickets
                     </button>
                   </div>
                 </form>
@@ -1319,35 +1028,35 @@ export default function App() {
             <div className="space-y-8 animate-fade-in">
               
               <div>
-                <h3 className="text-xl font-bold text-slate-900">Wallet Receipts Ledger</h3>
-                <p className="text-xs text-slate-500">Append-only cashout auditing with 5% Platform fees allocation.</p>
+                <h3 className="text-xl font-bold text-slate-900">Payments</h3>
+                <p className="text-xs text-slate-500">Revenue, transactions, and payout history.</p>
               </div>
 
               {/* DYNAMIC METRICS FOR ORGANIZER FINANCES */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 
                 <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm relative overflow-hidden">
-                  <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider">Total Sales Revenue</span>
+                  <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider">Gross Revenue</span>
                   <div className="text-3xl font-bold text-slate-900 font-mono mt-2">
                     KES {walletOverview?.grossCollected ? walletOverview.grossCollected.toLocaleString() : "12,000"}
                   </div>
-                  <p className="text-[10px] text-slate-500 mt-2 font-mono">Platform Margin Split: KES {walletOverview?.platformFees || "600"}</p>
+                  <p className="text-[10px] text-slate-500 mt-2">Platform fee: KES {walletOverview?.platformFees || "600"}</p>
                 </div>
 
                 <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm relative overflow-hidden">
-                  <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider">Withdrawn / Requested</span>
+                  <span className="text-[10px] text-slate-400 block uppercase font-bold tracking-wider">Total Payouts</span>
                   <div className="text-3xl font-bold text-slate-900 font-mono mt-2">
                     KES {walletOverview?.payouts ? walletOverview.payouts.reduce((sum: number, p: any) => sum + p.amount, 0).toLocaleString() : "0"}
                   </div>
-                  <p className="text-[10px] text-slate-500 mt-2">Simulated instant payout gateway transactions</p>
+                  <p className="text-[10px] text-slate-500 mt-2">Total amount withdrawn</p>
                 </div>
 
                 <div className="bg-white p-6 rounded-xl border border-emerald-100 shadow-sm relative overflow-hidden bg-gradient-to-br from-emerald-500/5 to-transparent">
-                  <span className="text-[10px] text-emerald-600 block uppercase font-bold tracking-wider">Available Balance Sweep</span>
+                  <span className="text-[10px] text-emerald-600 block uppercase font-bold tracking-wider">Available Balance</span>
                   <div className="text-3xl font-bold text-emerald-800 font-mono mt-2">
                     KES {walletOverview?.availableBalance ? walletOverview.availableBalance.toLocaleString() : "11,400"}
                   </div>
-                  <p className="text-[10px] text-emerald-600 mt-2 font-semibold">Ready for Daraja payout sweep ✓</p>
+                  <p className="text-[10px] text-emerald-600 mt-2 font-semibold">Ready for payout</p>
                 </div>
               </div>
 
@@ -1356,8 +1065,8 @@ export default function App() {
                 {/* PAYOUT REQUEST PANEL */}
                 <div className="bg-white p-6 rounded-xl border border-slate-200/80 lg:col-span-2 space-y-4">
                   <div className="border-b border-slate-100 pb-3">
-                    <h4 className="font-bold text-slate-900 text-sm uppercase">Request Direct Wallet Cashout</h4>
-                    <p className="text-xs text-slate-400 mt-1">Transfers profits securely to payout number via Safaricom B2C.</p>
+                    <h4 className="font-bold text-slate-900 text-sm uppercase">Request Payout</h4>
+                    <p className="text-xs text-slate-400 mt-1">Withdraw available balance to your M-Pesa payout number.</p>
                   </div>
 
                   <form onSubmit={handlePayoutRequest} className="space-y-4">
@@ -1403,7 +1112,7 @@ export default function App() {
                       className="w-full bg-slate-900 hover:bg-red-600 text-white font-semibold py-2.5 rounded-lg text-xs transition flex items-center justify-center gap-1.5"
                     >
                       {payoutLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4" />}
-                      Approve Payout Sweep
+                      Request Payout
                     </button>
                   </form>
                 </div>
@@ -1411,10 +1120,7 @@ export default function App() {
                 {/* LEDGER ARCHIVES APPEND-ONLY TABLE */}
                 <div className="bg-white p-6 rounded-xl border border-slate-250 lg:col-span-3 space-y-4">
                   <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                    <h4 className="font-bold text-slate-900 text-sm uppercase">Audit Ledger Records</h4>
-                    <span className="text-[9px] font-bold text-slate-400 uppercase bg-slate-100 px-2 py-0.5 rounded">
-                      REVOCATION: UPDATE RESTRICTED
-                    </span>
+                    <h4 className="font-bold text-slate-900 text-sm uppercase">Transaction History</h4>
                   </div>
 
                   <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
@@ -1470,8 +1176,8 @@ export default function App() {
             <div className="space-y-8 animate-fade-in">
               
               <div>
-                <h3 className="text-xl font-bold text-slate-900">KYC Verification Centre</h3>
-                <p className="text-xs text-slate-500">Verify your enterprise identity to withdraw payments through B2C safely.</p>
+                <h3 className="text-xl font-bold text-slate-900">Verification</h3>
+                <p className="text-xs text-slate-500">Verify your business identity to receive payouts.</p>
               </div>
 
               <div className="max-w-2xl bg-white rounded-xl border border-slate-205 p-6 space-y-6">
@@ -1481,9 +1187,9 @@ export default function App() {
                     <ShieldCheck className="h-6 w-6" />
                   </div>
                   <div>
-                    <h4 className="font-bold text-slate-900 text-sm">Legal Business Onboarding Checks</h4>
+                    <h4 className="font-bold text-slate-900 text-sm">KYC Verification</h4>
                     <p className="text-xs text-slate-400 leading-relaxed mt-1">
-                      To prevent money laundering, Safaricom Daraja integration rules require business entity verification. Let us verify your kra pins and business registry records quickly.
+                      Submit your business documents for KYC verification to enable payouts via M-Pesa B2C.
                     </p>
                   </div>
                 </div>
@@ -1491,7 +1197,7 @@ export default function App() {
                 <form onSubmit={handleKYCUpload} className="space-y-4 border-t border-slate-100 pt-5">
                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <label className="block text-[11px] font-bold text-slate-600 uppercase">Registered Company Name</label>
+                      <label className="block text-[11px] font-bold text-slate-600 uppercase">Business Name</label>
                       <input
                         type="text"
                         required
@@ -1503,7 +1209,7 @@ export default function App() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="block text-[11px] font-bold text-slate-600 uppercase">KRA Business Pin</label>
+                      <label className="block text-[11px] font-bold text-slate-600 uppercase">KRA PIN</label>
                       <input
                         type="text"
                         required
@@ -1514,17 +1220,17 @@ export default function App() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="block text-[11px] font-bold text-slate-600 uppercase">Enterprise Registration Document (PDF/PNG)</label>
+                    <label className="block text-[11px] font-bold text-slate-600 uppercase">Upload Document</label>
                     <div className="border-2 border-dashed border-slate-200 rounded-lg p-5 text-center cursor-pointer hover:border-red-500 transition">
                       <Layers className="h-7 w-7 text-slate-400 mx-auto mb-2 animate-bounce" />
-                      <p className="text-xs font-bold text-slate-900">Drag or click to choose files</p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Maximum upload file ceiling: 5MB</p>
+                      <p className="text-xs font-bold text-slate-900">Click to upload (PDF or PNG)</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Max file size: 5MB</p>
                     </div>
                   </div>
 
                   {kycSubmitted ? (
                     <div className="bg-emerald-50 text-emerald-600 text-xs p-3.5 rounded-lg border border-emerald-150 font-medium">
-                      Enterprise Identity credentials submitted and marked pending evaluation checker. KYC Verified status will reflect within hours.
+                      Documents submitted successfully. KYC status will be updated once reviewed.
                     </div>
                   ) : (
                     <button
@@ -1532,13 +1238,18 @@ export default function App() {
                       disabled={!kycBusinessName}
                       className="bg-slate-900 hover:bg-red-600 text-white font-bold py-2.5 px-6 rounded-lg text-xs transition"
                     >
-                      Authenticate Verification
+                      Submit for Verification
                     </button>
                   )}
                 </form>
               </div>
 
             </div>
+          )}
+
+          {/* ==================================== TAB: ADMIN DASHBOARD ==================================== */}
+          {activeTab === "admin" && (
+            <AdminDashboard token={token} />
           )}
 
         </div>
@@ -1555,14 +1266,46 @@ export default function App() {
         />
       )}
 
-      {/* 4. MODAL OVERLAY: TICKET SCANNER SIMULATOR */}
-      {showScanner && (
-        <TicketScannerSim
-          onClose={() => setShowScanner(false)}
-        />
+      {/* 4. MODAL OVERLAY: ADMIN LOGIN */}
+      {showAdminLogin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm mx-4">
+            <h2 className="text-lg font-bold text-slate-900 mb-1">Admin Login</h2>
+            <p className="text-xs text-slate-400 mb-5">Enter the admin password to access the admin dashboard.</p>
+            <form onSubmit={handleAdminLogin} className="space-y-4">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Password</label>
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  placeholder="Enter admin password"
+                  autoFocus
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white rounded-lg px-3 py-2.5 text-sm"
+                />
+              </div>
+              {adminLoginError && (
+                <p className="text-xs font-medium text-red-500">{adminLoginError}</p>
+              )}
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowAdminLogin(false); setAdminPassword(""); setAdminLoginError(""); }}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-slate-900 hover:bg-red-600 text-white font-bold py-2.5 rounded-lg text-sm transition cursor-pointer"
+                >
+                  Login
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
-
-
 
     </div>
   );

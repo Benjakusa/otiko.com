@@ -11,7 +11,7 @@ import AuthCard from "./AuthCard";
 interface SignupPageProps {
   onBackToHome: () => void;
   onLoginNavigate: () => void;
-  onSignupSuccess: (organizerData: any) => void;
+  onSignupSuccess: (organizerData: any, token: string) => void;
 }
 
 export default function SignupPage({ 
@@ -78,8 +78,8 @@ export default function SignupPage({
 
       const freshOrganizer = await registerRes.json();
       
-      // 4. Pass back authenticated organizer profile details
-      onSignupSuccess(freshOrganizer);
+      // 4. Pass back authenticated organizer profile details with Firebase ID token
+      onSignupSuccess(freshOrganizer, user.idToken);
     } catch (err: any) {
       console.error("Signup failed:", err);
       if (err.code === "auth/email-already-in-use") {

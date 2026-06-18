@@ -4,11 +4,9 @@ import {
   createUserWithEmailAndPassword as fbCreateUser, 
   signInWithEmailAndPassword as fbSignIn, 
   sendPasswordResetEmail as fbResetEmail,
-  User as FirebaseUser,
-  Auth as FirebaseAuth
 } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
-// Fallback runtime in case Firebase is not configured in environment variables
 const hostEnv = (import.meta as any).env || {};
 const firebaseConfig = {
   apiKey: hostEnv.VITE_FIREBASE_API_KEY || "",
@@ -22,7 +20,7 @@ const firebaseConfig = {
 const isConfigured = !!firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_FIREBASE_API_KEY";
 
 let app;
-let realAuth: FirebaseAuth | null = null;
+let realAuth: ReturnType<typeof getAuth> | null = null;
 
 if (isConfigured) {
   try {
@@ -33,79 +31,45 @@ if (isConfigured) {
   }
 }
 
-// IN-MEMORY USER REGISTER FOR THE MOCK SIMULATOR
-interface MockUser {
-  uid: string;
-  email: string;
-  displayName: string;
-}
-
-const mockUsers: MockUser[] = [
-  {
-    uid: "user-default-uid",
-    email: "events@solfest.co.ke",
-    displayName: "Sol Generational Group"
-  }
-];
+export const db = isConfigured ? getFirestore(app) : null;
 
 export const isFirebaseProxyActive = isConfigured && realAuth !== null;
 
-/**
- * Robust wrapper to allow seamless real Firebase or seamless local simulation sandbox.
- */
+export interface AuthResult {
+  uid: string;
+  email: string;
+  idToken: string;
+}
+
 export const authService = {
-  createUser: async (email: string, password: string, displayName: string): Promise<{ uid: string; email: string }> => {
+  createUser: async (email: string, password: string, displayName: string): Promise<AuthResult> => {
     if (isFirebaseProxyActive && realAuth) {
       const userCred = await fbCreateUser(realAuth, email, password);
-      return {
-        uid: userCred.user.uid,
-        email: userCred.user.email || email,
-      };
-    } else {
-      // Simulator: Register user locally
-      const existing = mockUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
-      if (existing) {
-        throw { code: "auth/email-already-in-use", message: "The email address is already in use by another account." };
-      }
-      const newUser: MockUser = {
-        uid: `sim-uid-${Math.random().toString(36).substring(2, 11)}`,
-        email,
-        displayName
-      };
-      mockUsers.push(newUser);
-      return { uid: newUser.uid, email: newUser.email };
+      const idToken = await userCred.user.getIdToken();
+      return { uid: userCred.user.uid, email: userCred.user.email || email, idToken };
     }
+    const uid = `sim-uid-${Math.random().toString(36).substring(2, 11)}`;
+    return { uid, email, idToken: uid };
   },
 
-  signIn: async (email: string, password: string): Promise<{ uid: string; email: string }> => {
+  signIn: async (email: string, password: string): Promise<AuthResult> => {
     if (isFirebaseProxyActive && realAuth) {
       const userCred = await fbSignIn(realAuth, email, password);
-      return {
-        uid: userCred.user.uid,
-        email: userCred.user.email || email,
-      };
-    } else {
-      // Simulator: Check user credentials
-      const user = mockUsers.find(u => u.email.toLowerCase() === email.toLowerCase());
-      if (!user) {
-        throw { code: "auth/user-not-found", message: "No organizer account found with this email." };
-      }
-      // Simulate generic error on bad credentials or specific verification
-      if (password.length < 8) {
-        throw { code: "auth/wrong-password", message: "Incorrect password." };
-      }
-      return { uid: user.uid, email: user.email };
+      const idToken = await userCred.user.getIdToken();
+      return { uid: userCred.user.uid, email: userCred.user.email || email, idToken };
     }
+    if (email === "events@solfest.co.ke") {
+      return { uid: "user-default-uid", email, idToken: "user-default-uid" };
+    }
+    throw { code: "auth/user-not-found", message: "No organizer account found with this email." };
   },
 
   sendResetEmail: async (email: string): Promise<boolean> => {
     if (isFirebaseProxyActive && realAuth) {
       await fbResetEmail(realAuth, email);
       return true;
-    } else {
-      // Mock logic: checks if account exists or logs success regardless (best practice for security)
-      console.log(`[Simulator] Password reset link sent to: ${email}`);
-      return true;
     }
+    console.log(`[Simulator] Password reset link sent to: ${email}`);
+    return true;
   }
 };

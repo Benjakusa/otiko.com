@@ -1,14 +1,11 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect } from "react";
-import { 
-  Building, Calendar, MapPin, Ticket as TicketIcon, Phone, Mail, 
-  User, CheckCircle2, AlertTriangle, Loader2, RefreshCw, X, Download, QrCode,
-  Share2, Check
+import {
+  Building, Calendar, MapPin, Ticket as TicketIcon, Phone, Mail,
+  User, CheckCircle2, AlertTriangle, Loader2, X, Download, Printer, Share2, Check, Eye
 } from "lucide-react";
+import QRCodeLib from "qrcode";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 import { Event, Order, Ticket } from "../types";
 
 interface PublicBuyFlowProps {
@@ -24,52 +21,32 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
   const [buyerPhone, setBuyerPhone] = useState("");
   const [buyerEmail, setBuyerEmail] = useState("");
 
-  const [step, setStep] = useState<"reserve" | "paying" | "processed" | "pdf_view">("reserve");
+  const [step, setStep] = useState<"reserve" | "paying" | "processed">("reserve");
   const [loading, setLoading] = useState(false);
   const [order, setOrder] = useState<Order | null>(null);
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [viewingTicket, setViewingTicket] = useState<number | null>(null);
+  const [qrDataUrls, setQrDataUrls] = useState<Record<string, string>>({});
+  const [sharingIndex, setSharingIndex] = useState<number | null>(null);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [downloading, setDownloading] = useState<number | "all" | null>(null);
 
-  // Mpesa STK response logs
-  const [stkStatus, setStkStatus] = useState<string>("");
-  const [mpesaNo, setMpesaNo] = useState("");
-  const [copied, setCopied] = useState(false);
+  const activeCategory = event.categories?.find(c => c.id === selectedCategory);
 
-  const fallbackCopyTextToClipboard = (text: string) => {
-    const textArea = document.createElement("textarea");
-    textArea.value = text;
-    textArea.style.top = "0";
-    textArea.style.left = "0";
-    textArea.style.position = "fixed";
-    document.body.appendChild(textArea);
-    textArea.focus();
-    textArea.select();
-    try {
-      document.execCommand('copy');
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Fallback copy fail', err);
-    }
-    document.body.removeChild(textArea);
-  };
+  const organizerName = (event as any).organizerName || event.organizerId || "Event Organizer";
 
-  const copyToClipboard = (text: string) => {
+  const copyToClipboard = (text: string, index: number) => {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      }).catch(() => {
-        fallbackCopyTextToClipboard(text);
-      });
-    } else {
-      fallbackCopyTextToClipboard(text);
+        setCopiedIndex(index);
+        setTimeout(() => setCopiedIndex(null), 2000);
+      }).catch(() => {});
     }
   };
 
   const handleShare = async () => {
     const shareUrl = `${window.location.origin}${window.location.pathname}?event=${event.eventCode}`;
-    
     if (navigator.share) {
       try {
         await navigator.share({
@@ -79,17 +56,14 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
         });
       } catch (err) {
         if (err instanceof Error && err.name !== "AbortError") {
-          copyToClipboard(shareUrl);
+          copyToClipboard(shareUrl, -1);
         }
       }
     } else {
-      copyToClipboard(shareUrl);
+      copyToClipboard(shareUrl, -1);
     }
   };
 
-  const activeCategory = event.categories?.find(c => c.id === selectedCategory);
-
-  // Poll for database order state updates
   useEffect(() => {
     let intervalId: any;
     if (step === "paying" && order?.id) {
@@ -106,7 +80,7 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
               clearInterval(intervalId);
             } else if (data.status === "failed" || data.status === "expired") {
               setOrder(data);
-              setError(`Reservation state changed to: ${data.status.toUpperCase()}`);
+              setError(`Reservation ${data.status.toUpperCase()}`);
               clearInterval(intervalId);
             }
           }
@@ -126,10 +100,40 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
       if (res.ok) {
         const data = await res.json();
         setTickets(data);
+        generateAllQrCodes(data);
       }
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const generateAllQrCodes = async (tktList: Ticket[]) => {
+    const urls: Record<string, string> = {};
+    for (const t of tktList) {
+      const cat = event.categories?.find(c => c.id === t.categoryId);
+      const displayDate = new Date(event.eventDate).toLocaleDateString("en-US", {
+        year: "numeric", month: "short", day: "numeric",
+      });
+      const payload = [
+        `${t.ticketNumber}:${t.verificationCode || ""}`,
+        event.name,
+        organizerName,
+        cat?.name || "General",
+        `KES ${cat?.price.toLocaleString() || "—"}`,
+        displayDate,
+        "Powered by Otiko.com",
+      ].join("|");
+      try {
+        urls[t.id] = await QRCodeLib.toDataURL(payload, {
+          width: 300,
+          margin: 2,
+          color: { dark: "#0F172A", light: "#FFFFFF" },
+        });
+      } catch (err) {
+        console.error("QR generation failed", err);
+      }
+    }
+    setQrDataUrls(urls);
   };
 
   const handleReserve = async (e: React.FormEvent) => {
@@ -146,84 +150,314 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
       const res = await fetch("/api/orders/reserve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          categoryId: selectedCategory,
-          quantity,
-          buyerName,
-          buyerPhone,
-          buyerEmail
-        }),
+        body: JSON.stringify({ categoryId: selectedCategory, quantity, buyerName, buyerPhone, buyerEmail }),
       });
 
       const data = await res.json();
       if (!res.ok) {
         if (data.error === "NOT_ENOUGH_TICKETS") {
-          setError("Ticket levels depleted. Please select another category or reduce quantity booking.");
+          setError("Ticket levels depleted. Please select another category or reduce quantity.");
         } else {
-          setError(data.error || "An error occurred with reservation processing.");
+          setError(data.error || "An error occurred.");
         }
       } else {
         setOrder(data);
         setStep("paying");
-        // Auto-trigger STK push initiation on Nairobi Daraja
         initiateStkPush(data.id, buyerPhone);
       }
     } catch (err) {
-      setError("Failed to secure tickets connection with reservation system.");
+      setError("Failed to connect with reservation system.");
     } finally {
       setLoading(false);
     }
   };
 
   const initiateStkPush = async (orderId: string, phone: string) => {
-    setStkStatus("Initiating Daraja checkout handshake...");
     try {
-      const res = await fetch(`/api/mpesa/initiate/${orderId}`, {
+      await fetch(`/api/mpesa/initiate/${orderId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber: phone })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setStkStatus("STK Push prompt sent successfully! Check phone for payment PIN.");
-        if (data.mpesaCheckoutRequestId) {
-          setMpesaNo(data.mpesaCheckoutRequestId);
-        }
-      } else {
-        setStkStatus(data.error || "M-Pesa STK push timeout.");
-      }
-    } catch (err) {
-      setStkStatus("Warning: Local network failure while triggering prompt.");
-    }
-  };
-
-  // Safe manual bypass trigger for debug sandbox
-  const handleForcePaySuccess = async (success: boolean) => {
-    if (!order || !mpesaNo) return;
-    try {
-      await fetch("/api/mpesa/simulated-callback", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ checkoutRequestId: mpesaNo, success })
+        body: JSON.stringify({ phoneNumber: phone }),
       });
     } catch (err) {
       console.error(err);
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-neutral-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-40 animate-fade-in overflow-y-auto">
-      <div className="bg-neutral-900 border border-neutral-800 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl my-8">
-        
-        {/* HEADER */}
-        <div className="p-6 bg-neutral-950 border-b border-neutral-800 flex justify-between items-start">
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString("en-US", {
+      weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  };
+
+  const generatePdf = async (ticketIndex?: number) => {
+    const indices = ticketIndex !== undefined ? [ticketIndex] : tickets.map((_, i) => i);
+    if (indices.length === 0) return;
+
+    const pdf = new jsPDF("p", "mm", "a4");
+    const pageW = 210;
+    const pageH = 297;
+    const margin = 10;
+    const contentW = pageW - margin * 2;
+
+    for (let idx = 0; idx < indices.length; idx++) {
+      const ti = indices[idx];
+      const ticket = tickets[ti];
+      if (!ticket) continue;
+
+      const el = document.getElementById(`ticket-card-${ticket.id}`);
+      if (!el) continue;
+
+      try {
+        const canvas = await html2canvas(el, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: "#FFFFFF",
+        });
+        const imgData = canvas.toDataURL("image/jpeg", 0.95);
+        const imgRatio = canvas.width / canvas.height;
+        let imgW = contentW;
+        let imgH = imgW / imgRatio;
+        if (imgH > pageH - margin * 2) {
+          imgH = pageH - margin * 2;
+          imgW = imgH * imgRatio;
+        }
+        const x = (pageW - imgW) / 2;
+        const y = (pageH - imgH) / 2;
+
+        if (idx > 0) pdf.addPage();
+        pdf.addImage(imgData, "JPEG", x, y, imgW, imgH, undefined, "FAST");
+      } catch (err) {
+        console.error("PDF generation error for ticket", ti, err);
+      }
+    }
+
+    const blob = pdf.output("blob");
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    if (ticketIndex !== undefined) {
+      a.download = `${event.eventCode}-ticket-${String(ticketIndex + 1).padStart(2, "0")}.pdf`;
+    } else {
+      a.download = `${event.eventCode}-tickets.pdf`;
+    }
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadTicket = async (index: number) => {
+    setDownloading(index);
+    await generatePdf(index);
+    setDownloading(null);
+  };
+
+  const handleDownloadAll = async () => {
+    setDownloading("all");
+    await generatePdf();
+    setDownloading(null);
+  };
+
+  const generatePdfBlob = async (ticketIndex: number): Promise<Blob | null> => {
+    const ticket = tickets[ticketIndex];
+    if (!ticket) return null;
+
+    const pdf = new jsPDF("p", "mm", "a4");
+    const pageW = 210;
+    const pageH = 297;
+    const margin = 10;
+    const contentW = pageW - margin * 2;
+
+    const el = document.getElementById(`ticket-card-${ticket.id}`);
+    if (!el) return null;
+
+    try {
+      const canvas = await html2canvas(el, {
+        scale: 2, useCORS: true, allowTaint: true, backgroundColor: "#FFFFFF",
+      });
+      const imgData = canvas.toDataURL("image/jpeg", 0.95);
+      const imgRatio = canvas.width / canvas.height;
+      let imgW = contentW;
+      let imgH = imgW / imgRatio;
+      if (imgH > pageH - margin * 2) {
+        imgH = pageH - margin * 2;
+        imgW = imgH * imgRatio;
+      }
+      pdf.addImage(imgData, "JPEG", (pageW - imgW) / 2, (pageH - imgH) / 2, imgW, imgH, undefined, "FAST");
+      return pdf.output("blob");
+    } catch (err) {
+      console.error("PDF blob generation error", err);
+      return null;
+    }
+  };
+
+  const handleShareTicket = async (index: number) => {
+    setSharingIndex(index);
+    const blob = await generatePdfBlob(index);
+    if (!blob) { setSharingIndex(null); return; }
+    const fileName = `${event.eventCode}-ticket-${String(index + 1).padStart(2, "0")}.pdf`;
+    const file = new File([blob], fileName, { type: "application/pdf" });
+    if (navigator.share && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: `${event.name} Ticket`, text: `Ticket for ${event.name}` });
+      } catch (err) {
+        if (err instanceof Error && err.name !== "AbortError") {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = fileName; a.click();
+          URL.revokeObjectURL(url);
+        }
+      }
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+    }
+    setSharingIndex(null);
+  };
+
+  const renderTicketCard = (ticket: Ticket, index: number, standalone: boolean = false) => {
+    const qrUrl = qrDataUrls[ticket.id];
+    const cat = event.categories?.find(c => c.id === ticket.categoryId);
+
+    return (
+      <div
+        id={`ticket-card-${ticket.id}`}
+        key={ticket.id}
+        className={`bg-white ${standalone ? "" : "rounded-2xl shadow-lg border border-slate-200"} overflow-hidden`}
+      >
+        {event.flyerUrl && (
+          <div className="w-full h-44 sm:h-52 overflow-hidden bg-slate-100">
+            <img
+              src={event.flyerUrl}
+              alt={event.name}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        )}
+
+        <div className="p-5 sm:p-6 space-y-4">
           <div>
-            <span className="text-xs font-semibold px-2 py-1 rounded bg-red-500/10 text-red-500 uppercase tracking-widest">
-              Securing Tickets
+            <h3 className="text-xl font-bold text-slate-900">{event.name}</h3>
+            <p className="text-sm text-slate-500 flex items-center gap-1.5 mt-1">
+              <Building className="h-3.5 w-3.5" />
+              {organizerName}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Ticket Type</span>
+              <p className="font-semibold text-slate-900 mt-0.5">{cat?.name || "General"}</p>
+            </div>
+            <div>
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Amount Paid</span>
+              <p className="font-semibold text-slate-900 mt-0.5">KES {cat?.price.toLocaleString() || "—"}</p>
+            </div>
+            <div className="col-span-2">
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Date & Time</span>
+              <p className="font-semibold text-slate-900 mt-0.5 flex items-center gap-1.5">
+                <Calendar className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                {formatDate(event.eventDate)}
+              </p>
+            </div>
+            <div className="col-span-2">
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Venue</span>
+              <p className="font-semibold text-slate-900 mt-0.5 flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                {event.venue}
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-center">
+            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Ticket Number</span>
+            <p className="font-mono font-bold text-slate-900 text-sm mt-0.5 select-all">{ticket.ticketNumber}</p>
+          </div>
+
+          <div className="flex flex-col items-center gap-2">
+            {qrUrl ? (
+              <img
+                src={qrUrl}
+                alt="Ticket QR Code"
+                className="w-36 h-36 border border-slate-200 rounded-xl p-1"
+              />
+            ) : (
+              <div className="w-36 h-36 bg-slate-100 border border-slate-200 rounded-xl flex items-center justify-center">
+                <Loader2 className="h-6 w-6 text-slate-400 animate-spin" />
+              </div>
+            )}
+            <span className="text-[10px] text-slate-400 font-medium">Powered by Otiko.com</span>
+          </div>
+
+          {!standalone && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              <button
+                onClick={() => setViewingTicket(index)}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 transition"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">View</span>
+              </button>
+              <button
+                onClick={() => handleDownloadTicket(index)}
+                disabled={downloading === index}
+                className="bg-slate-900 hover:bg-red-650 text-white font-medium py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 transition disabled:bg-slate-300"
+              >
+                {downloading === index ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Download className="h-3.5 w-3.5" />
+                )}
+                <span className="hidden sm:inline">{downloading === index ? "..." : "PDF"}</span>
+              </button>
+              <button
+                onClick={() => window.print()}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 transition"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Print</span>
+              </button>
+              <button
+                onClick={() => handleShareTicket(index)}
+                disabled={sharingIndex === index}
+                className={`font-medium py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 transition ${
+                  sharingIndex === index
+                    ? "bg-emerald-50 text-emerald-600"
+                    : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                }`}
+              >
+                {sharingIndex === index ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Share2 className="h-3.5 w-3.5" />
+                )}
+                <span className="hidden sm:inline">{sharingIndex === index ? "Sharing..." : "Share"}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-start justify-center p-3 sm:p-4 z-40 overflow-y-auto">
+      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl my-4 sm:my-8">
+
+        {/* HEADER */}
+        <div className="p-4 sm:p-6 border-b border-slate-200 flex justify-between items-start gap-4">
+          <div className="min-w-0">
+            <span className="text-[10px] font-semibold px-2 py-1 rounded bg-red-50 text-red-600 uppercase tracking-widest">
+              Ticket Booking
             </span>
-            <h3 className="font-semibold text-xl text-white mt-2 leading-tight">{event.name}</h3>
-            <p className="text-xs text-neutral-400 mt-1 flex items-center gap-1">
-              <MapPin className="h-3.5 w-3.5 text-neutral-500" /> {event.venue}
+            <h3 className="font-bold text-lg sm:text-xl text-slate-900 mt-2 leading-tight">{event.name}</h3>
+            <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+              <MapPin className="h-3.5 w-3.5 shrink-0" /> {event.venue}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -231,28 +465,18 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
               type="button"
               onClick={handleShare}
               className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
-                copied 
-                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" 
-                  : "bg-neutral-900 border-neutral-800 hover:border-neutral-700 text-neutral-300 hover:text-white"
+                copiedIndex === -1
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-600"
+                  : "bg-white border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900"
               }`}
-              title="Copy event reservation link to clipboard"
             >
-              {copied ? (
-                <>
-                  <Check className="h-4 w-4" />
-                  <span>Copied!</span>
-                </>
-              ) : (
-                <>
-                  <Share2 className="h-4 w-4" />
-                  <span>Share</span>
-                </>
-              )}
+              {copiedIndex === -1 ? <Check className="h-3.5 w-3.5" /> : <Share2 className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">{copiedIndex === -1 ? "Copied!" : "Share"}</span>
             </button>
-            <button 
+            <button
               type="button"
-              onClick={onClose} 
-              className="text-neutral-400 hover:text-white p-2 hover:bg-neutral-800 rounded-lg transition"
+              onClick={onClose}
+              className="text-slate-400 hover:text-slate-900 p-2 hover:bg-slate-100 rounded-lg transition"
             >
               <X className="h-5 w-5" />
             </button>
@@ -262,23 +486,19 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
         {/* STEP 1: RESERVE */}
         {step === "reserve" && (
           <form onSubmit={handleReserve}>
-            <div className="p-6 space-y-6">
+            <div className="p-4 sm:p-6 space-y-5">
               {error && (
-                <div className="bg-rose-950/40 border border-rose-900/50 p-4 rounded-xl flex gap-3 text-xs text-rose-300">
-                  <AlertTriangle className="h-5 w-5 shrink-0" />
-                  <div>
-                    <span className="font-semibold block uppercase">Reservation Conflict</span>
-                    {error}
-                  </div>
+                <div className="bg-red-50 border border-red-200 p-3.5 rounded-xl flex gap-3 text-xs text-red-700">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{error}</span>
                 </div>
               )}
 
-              {/* TICKET CATEGORY SELECTION */}
               <div className="space-y-3">
-                <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">
                   Select Ticket Level
                 </label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {event.categories?.map((cat) => {
                     const selected = selectedCategory === cat.id;
                     const soldOut = cat.remainingQuantity <= 0;
@@ -287,28 +507,23 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
                         key={cat.id}
                         type="button"
                         disabled={soldOut}
-                        onClick={() => {
-                          setSelectedCategory(cat.id);
-                          setQuantity(1);
-                        }}
+                        onClick={() => { setSelectedCategory(cat.id); setQuantity(1); }}
                         className={`text-left p-4 rounded-xl border transition ${
-                          selected 
-                            ? "bg-red-500/10 border-red-500 text-red-400" 
-                            : soldOut 
-                              ? "bg-neutral-950 border-neutral-800 text-neutral-600 cursor-not-allowed" 
-                              : "bg-neutral-950 border-neutral-800 hover:border-neutral-700 text-white"
+                          selected
+                            ? "bg-red-50 border-red-500 text-red-700"
+                            : soldOut
+                              ? "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed"
+                              : "bg-white border-slate-200 hover:border-slate-300 text-slate-900"
                         }`}
                       >
                         <div className="flex justify-between items-start">
-                          <span className="font-medium text-sm block">{cat.name}</span>
-                          <span className="font-mono text-sm font-semibold">
-                            KES {cat.price.toLocaleString()}
-                          </span>
+                          <span className="font-medium text-sm">{cat.name}</span>
+                          <span className="font-mono text-sm font-semibold">KES {cat.price.toLocaleString()}</span>
                         </div>
-                        <div className="flex justify-between items-center mt-3 text-xs text-neutral-400">
-                          <span>Available in Vault</span>
-                          <span className={`font-mono ${cat.remainingQuantity < 20 ? "text-red-500 font-bold" : "text-neutral-500"}`}>
-                            {soldOut ? "SOLD OUT" : `${cat.remainingQuantity} spots`}
+                        <div className="flex justify-between items-center mt-2 text-xs text-slate-500">
+                          <span>Available</span>
+                          <span className={`font-mono ${cat.remainingQuantity < 20 ? "text-red-600 font-bold" : "text-slate-500"}`}>
+                            {soldOut ? "SOLD OUT" : `${cat.remainingQuantity} left`}
                           </span>
                         </div>
                       </button>
@@ -317,330 +532,151 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
                 </div>
               </div>
 
-              {/* DETAILS AND QUANTITY */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="md:col-span-1 space-y-2">
-                  <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
-                    Quantity
-                  </label>
-                  <div className="flex border border-neutral-800 rounded-xl bg-neutral-950 overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => setQuantity(q => Math.max(1, q - 1))}
-                      className="px-4 py-2 hover:bg-neutral-800 text-white border-r border-neutral-800 transition"
-                    >
-                      -
-                    </button>
-                    <input
-                      type="number"
-                      readOnly
-                      value={quantity}
-                      className="w-full text-center text-sm text-white font-mono bg-transparent focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const limit = activeCategory?.remainingQuantity || 10;
-                        setQuantity(q => Math.min(limit, q + 1));
-                      }}
-                      className="px-4 py-2 hover:bg-neutral-800 text-white border-l border-neutral-800 transition"
-                    >
-                      +
-                    </button>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">Quantity</label>
+                  <div className="flex border border-slate-200 rounded-xl bg-white overflow-hidden">
+                    <button type="button" onClick={() => setQuantity(q => Math.max(1, q - 1))} className="px-4 py-2 hover:bg-slate-50 text-slate-700 border-r border-slate-200 transition">-</button>
+                    <input type="number" readOnly value={quantity} className="w-full text-center text-sm text-slate-900 font-mono bg-transparent focus:outline-none" />
+                    <button type="button" onClick={() => { const limit = activeCategory?.remainingQuantity || 10; setQuantity(q => Math.min(limit, q + 1)); }} className="px-4 py-2 hover:bg-slate-50 text-slate-700 border-l border-slate-200 transition">+</button>
                   </div>
                 </div>
-
-                <div className="md:col-span-2 space-y-2">
-                  <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
-                    Full Legal Name
-                  </label>
+                <div className="sm:col-span-2 space-y-2">
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">Full Name</label>
                   <div className="relative">
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Kamau Njoroge"
-                      value={buyerName}
-                      onChange={(e) => setBuyerName(e.target.value)}
-                      className="w-full bg-neutral-950 border border-neutral-800 focus:border-red-500 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none transition"
-                    />
-                    <User className="absolute left-3 top-3.5 h-4 w-4 text-neutral-600" />
+                    <input type="text" required placeholder="e.g. Kamau Njoroge" value={buyerName} onChange={(e) => setBuyerName(e.target.value)} className="w-full bg-white border border-slate-200 focus:border-red-500 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-900 focus:outline-none transition" />
+                    <User className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
-                    M-Pesa Mobile Number
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">M-Pesa Number</label>
                   <div className="relative">
-                    <input
-                      type="tel"
-                      required
-                      placeholder="e.g. 0712345678"
-                      value={buyerPhone}
-                      onChange={(e) => setBuyerPhone(e.target.value)}
-                      className="w-full bg-neutral-950 border border-neutral-800 focus:border-red-500 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none transition"
-                    />
-                    <Phone className="absolute left-3 top-3.5 h-4 w-4 text-neutral-600" />
+                    <input type="tel" required placeholder="e.g. 0712345678" value={buyerPhone} onChange={(e) => setBuyerPhone(e.target.value)} className="w-full bg-white border border-slate-200 focus:border-red-500 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-900 focus:outline-none transition" />
+                    <Phone className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                   </div>
                 </div>
-
                 <div className="space-y-2">
-                  <label className="block text-xs font-semibold text-neutral-300 uppercase tracking-wider">
-                    Email Address (PDF Tickets dispatch)
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">Email Address</label>
                   <div className="relative">
-                    <input
-                      type="email"
-                      required
-                      placeholder="e.g. client@domain.com"
-                      value={buyerEmail}
-                      onChange={(e) => setBuyerEmail(e.target.value)}
-                      className="w-full bg-neutral-950 border border-neutral-800 focus:border-red-500 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none transition"
-                    />
-                    <Mail className="absolute left-3 top-3.5 h-4 w-4 text-neutral-600" />
+                    <input type="email" required placeholder="e.g. client@domain.com" value={buyerEmail} onChange={(e) => setBuyerEmail(e.target.value)} className="w-full bg-white border border-slate-200 focus:border-red-500 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-900 focus:outline-none transition" />
+                    <Mail className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* LOWER CART ACTIONS */}
-            <div className="p-6 bg-neutral-950 border-t border-neutral-800 flex justify-between items-center gap-6">
+            <div className="p-4 sm:p-6 bg-slate-50 border-t border-slate-200 flex justify-between items-center gap-4">
               <div>
-                <span className="text-neutral-500 text-xs block">Total Cart Amount</span>
-                <span className="text-lg font-mono font-bold text-red-500">
-                  KES {((activeCategory?.price || 0) * quantity).toLocaleString()}
-                </span>
+                <span className="text-slate-500 text-xs block">Total</span>
+                <span className="text-lg font-mono font-bold text-red-600">KES {((activeCategory?.price || 0) * quantity).toLocaleString()}</span>
               </div>
-              <button
-                type="submit"
-                disabled={loading || !selectedCategory}
-                className="bg-red-650 hover:bg-red-600 text-white font-medium px-8 py-3 rounded-xl flex items-center gap-2 disabled:bg-neutral-800 disabled:text-neutral-600 transition"
-              >
+              <button type="submit" disabled={loading || !selectedCategory} className="bg-slate-900 hover:bg-red-650 text-white font-medium px-6 sm:px-8 py-3 rounded-xl flex items-center gap-2 disabled:bg-slate-200 disabled:text-slate-400 transition text-sm">
                 {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <TicketIcon className="h-5 w-5" />}
-                Reserve Spots
+                Reserve
               </button>
             </div>
           </form>
         )}
 
-        {/* STEP 2: STK PUSH PAYING STATE */}
+        {/* STEP 2: PAYING */}
         {step === "paying" && order && (
-          <div className="p-6 space-y-6">
-            <div className="flex flex-col items-center justify-center py-6 text-center text-sm space-y-2">
-              <Loader2 className="h-10 w-10 text-red-500 animate-spin" />
-              <h4 className="font-semibold text-lg text-white mt-4">Waiting for M-Pesa PIN Input...</h4>
-              <p className="text-xs text-neutral-400 max-w-sm">
-                We have pushed a secure STK prompt of <span className="font-semibold text-red-500">KES {order.totalAmount.toLocaleString()}</span> to the handset registred with <span className="font-mono text-white">{order.buyerPhone}</span>.
+          <div className="p-6 sm:p-8 space-y-6">
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mb-5">
+                <Loader2 className="h-8 w-8 text-red-600 animate-spin" />
+              </div>
+              <h4 className="font-bold text-lg text-slate-900">Waiting for Payment</h4>
+              <p className="text-sm text-slate-500 max-w-sm mt-2">
+                A payment request of <span className="font-semibold text-slate-900">KES {order.totalAmount.toLocaleString()}</span> has been sent to <span className="font-mono text-slate-900">{order.buyerPhone}</span>. Enter your M-Pesa PIN to confirm.
               </p>
-            </div>
-
-            {/* DARAJA SANDBOX TELEMETRY LOGS */}
-            <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-5 font-mono text-xs">
-              <div className="flex justify-between items-center mb-3 text-neutral-500 text-[10px] uppercase font-sans tracking-widest font-semibold border-b border-neutral-800 pb-2">
-                <span>Daraja STK Sandboxed Telemetry</span>
-                <span className="flex items-center gap-1 text-emerald-500">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Safe Listening Endpoint
-                </span>
-              </div>
-              <div className="space-y-1.5 text-neutral-300">
-                <p><span className="text-neutral-500">CheckoutID:</span> {mpesaNo || "Initiating..."}</p>
-                <p><span className="text-neutral-500">Client Status:</span> {stkStatus}</p>
-                <p><span className="text-neutral-500">Auth Token:</span> Bearer CACHED_IN_REDIS_TTL_3599</p>
-              </div>
-
-              {/* ACTION TOGGLES FOR EASY TESTING WITHOUT HANDSET KEY */}
-              <div className="mt-5 border-t border-neutral-800 pt-4 flex flex-col sm:flex-row gap-3 justify-center">
-                <button
-                  onClick={() => handleForcePaySuccess(true)}
-                  className="bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 hover:border-emerald-500 text-emerald-400 font-sans text-xs px-4 py-2 rounded-lg transition"
-                >
-                  Simulate M-Pesa Callback (Success)
-                </button>
-                <button
-                  onClick={() => handleForcePaySuccess(false)}
-                  className="bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 hover:border-rose-500 text-rose-400 font-sans text-xs px-3 py-2 rounded-lg transition"
-                >
-                  Simulate M-Pesa Callback (Cancel)
-                </button>
-              </div>
-            </div>
-
-            <div className="text-[11px] text-center text-neutral-500 font-sans leading-normal">
-              Tickets will reserve for 5 minutes only. Do not refresh or browse back. Safaricom's webhook returns validation code automatically.
+              <p className="text-xs text-slate-400 mt-4">Do not close this page. Your tickets will appear automatically once payment is confirmed.</p>
             </div>
           </div>
         )}
 
-        {/* STEP 3: PROCESSED SUCCESS */}
+        {/* STEP 3: PROCESSED */}
         {step === "processed" && order && (
-          <div className="p-6 space-y-6">
-            <div className="text-center space-y-3 py-4">
-              <div className="inline-flex items-center justify-center p-3 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                <CheckCircle2 className="h-12 w-12" />
+          <div className="p-4 sm:p-6 space-y-5">
+            <div className="text-center space-y-2 py-2">
+              <div className="inline-flex items-center justify-center p-2 rounded-full bg-emerald-50 border border-emerald-200">
+                <CheckCircle2 className="h-8 w-8 text-emerald-600" />
               </div>
-              <h4 className="font-bold text-2xl text-white">Tickets Activated Successfully!</h4>
-              <p className="text-xs text-neutral-400 max-w-md mx-auto">
-                Payment received for checkout request <span className="font-mono text-white text-xs">{mpesaNo}</span>. {order.quantity} ticket codes have been generated and signature-signed.
-              </p>
+              <h4 className="font-bold text-xl text-slate-900">Tickets Confirmed!</h4>
+              <p className="text-sm text-slate-500">{order.quantity} ticket(s) for {event.name}</p>
             </div>
 
-            {/* GENERATED TICKETS CONTAINER */}
-            <div className="space-y-4">
-              <h5 className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                Authorized Passes ({tickets.length})
-              </h5>
-              <div className="space-y-3 max-h-72 overflow-y-auto">
-                {tickets.map((t) => (
-                  <div key={t.id} className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    <div>
-                      <div className="text-xs text-neutral-500 font-medium">PASS IDENTIFIER</div>
-                      <div className="text-sm font-semibold font-mono text-red-500 uppercase mt-0.5">
-                        {event.eventCode}—TKT-{t.ticketNumber}
-                      </div>
-                      <div className="text-[10px] text-neutral-400 mt-1 font-mono font-bold max-w-sm overflow-hidden text-ellipsis">
-                        SIG: {t.qrSignature}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => setStep("pdf_view")}
-                      className="bg-neutral-850 hover:bg-neutral-700 text-white hover:text-red-300 font-medium text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 border border-neutral-700 transition"
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      Print / Download Pass
-                    </button>
-                  </div>
-                ))}
-              </div>
+            <div className="space-y-5">
+              {tickets.map((ticket, index) => renderTicketCard(ticket, index))}
             </div>
 
-            <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-xl text-xs leading-relaxed text-red-200">
-              <span className="font-semibold block mb-0.5">Physical scanner warning:</span>
-              To enter gates, make sure you copy the entire <span className="font-semibold">ID:SIGNATURE</span> string (e.g. <span className="font-mono bg-neutral-900 border border-neutral-800 px-1 rounded text-[11px]">{tickets[0]?.id}:{tickets[0]?.qrSignature}</span>) to test the Validator Scanner tools provided in headers.
-            </div>
-          </div>
-        )}
-
-        {/* STEP 4: PRESET REAL-TICKET PDF EMULATOR */}
-        {step === "pdf_view" && tickets.length > 0 && (
-          <div className="p-6 space-y-6">
-            <div className="flex justify-between items-center mb-1">
-              <h4 className="text-xs font-bold uppercase tracking-widest text-red-500 font-semibold">Official Ticketing Dispatch</h4>
-              <button
-                onClick={() => setStep("processed")}
-                className="text-xs text-neutral-400 hover:text-white"
-              >
-                ← Back to Order
-              </button>
-            </div>
-
-            {/* IMMERSIVE TICKET PDF LAYOUT */}
-            <div className="bg-white text-neutral-950 rounded-2xl p-6 shadow-xl space-y-6 print:p-0">
-              {/* BRAND HEADER */}
-              <div className="flex justify-between items-center border-b-2 border-dashed border-neutral-200 pb-4">
-                <div>
-                  <h1 className="text-2xl font-black tracking-tighter text-neutral-900 flex items-center gap-1.5 animate-pulse">
-                    OTIKO<span className="text-red-600">.COM</span>
-                  </h1>
-                  <span className="text-[10px] uppercase font-bold tracking-widest text-neutral-400">
-                    Secure Entry Gate Credentials
-                  </span>
-                </div>
-                <div className="text-right">
-                  <span className="font-mono text-xs font-bold bg-neutral-100 text-neutral-800 px-2 py-1 rounded">
-                    {event.eventCode}
-                  </span>
-                </div>
-              </div>
-
-              {/* EVENT SPECS */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <h3 className="text-xs uppercase font-bold text-neutral-400 tracking-wider">EVENT VENUE</h3>
-                  <p className="font-semibold text-neutral-900 text-sm mt-0.5">{event.name}</p>
-                  
-                  <h3 className="text-xs uppercase font-bold text-neutral-400 tracking-wider mt-4">DATE & TIME</h3>
-                  <p className="font-medium text-neutral-800 text-sm mt-0.5">
-                    {new Date(event.eventDate).toLocaleDateString("en-US", {
-                      weekday: "long",
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit"
-                    })}
-                  </p>
-
-                  <h3 className="text-xs uppercase font-bold text-neutral-400 tracking-wider mt-4">TICKET HOLDER</h3>
-                  <p className="font-semibold text-neutral-900 text-sm mt-0.5">{buyerName || " Kamau Njoroge"}</p>
-                </div>
-
-                <div className="bg-neutral-50 p-4 rounded-xl border border-neutral-100 space-y-3">
-                  <div>
-                    <h3 className="text-[10px] uppercase font-bold tracking-widest text-neutral-400">PASSE LEVEL</h3>
-                    <p className="font-bold text-sm text-neutral-900 mt-0.5">
-                      {event.categories?.find(c => c.id === selectedCategory)?.name || "VIP Regular"}
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 border-t border-neutral-200/60 pt-3">
-                    <div>
-                      <h3 className="text-[10px] uppercase font-bold text-neutral-400">AMOUNT</h3>
-                      <p className="font-semibold text-xs font-mono text-neutral-900">
-                        KES {activeCategory?.price.toLocaleString()}
-                      </p>
-                    </div>
-                    <div>
-                      <h3 className="text-[10px] uppercase font-bold text-neutral-400">QUANTITY</h3>
-                      <p className="font-semibold text-xs font-mono text-neutral-900">{quantity} ticket(s)</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* TICKET SCAN ENTRY WRAPPER */}
-              <div className="bg-neutral-50/50 border border-neutral-100 rounded-xl p-4 flex flex-col md:flex-row items-center gap-4">
-                {/* Simulated SVG QR representing ticket id/signature */}
-                <div className="h-28 w-28 bg-white border border-neutral-200 rounded-xl p-2 flex items-center justify-center shrink-0">
-                  <div className="relative text-neutral-900 h-full w-full flex flex-col items-center justify-center">
-                    <QrCode className="h-16 w-16 text-red-600" />
-                    <span className="text-[9px] font-bold text-neutral-400 mt-1 uppercase">SIGNED PASS</span>
-                  </div>
-                </div>
-
-                <div className="text-left w-full space-y-2">
-                  <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-widest">
-                    GATE PASS SIGNATURE SECURITY VERIFY
-                  </h4>
-                  <p className="text-[11px] leading-relaxed text-neutral-500">
-                    To prevent duplication or counterfeits, Otiko tickets are secure signed with HMAC-SHA256. When gate stewards scan the code, the verification engine verifies the credentials on-chain.
-                  </p>
-                  <div className="bg-neutral-900 text-red-500 font-mono text-[9px] font-bold p-2.5 rounded-lg border border-neutral-800 break-all select-all">
-                    {tickets[0]?.id}:{tickets[0]?.qrSignature}
-                  </div>
-                </div>
-              </div>
-
-              {/* TERMS CONDITIONS SLAT */}
-              <div className="text-[9px] leading-relaxed text-neutral-400 border-t border-neutral-100 pt-4 text-center">
-                This ticket is subject to individual venue rules and terms. Admission is subject to age and security check limitations. 
-                Otiko.com is registered by Sol Foundation Co.
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => window.print()}
-                className="flex-1 bg-red-650 hover:bg-red-600 text-white font-semibold py-3 rounded-xl shadow transition text-sm flex items-center justify-center gap-1.5"
-              >
+            <button
+              onClick={handleDownloadAll}
+              disabled={downloading === "all"}
+              className="w-full bg-slate-900 hover:bg-red-650 text-white font-semibold py-3 rounded-xl text-sm flex items-center justify-center gap-2 transition disabled:bg-slate-300"
+            >
+              {downloading === "all" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
                 <Download className="h-4 w-4" />
-                Trigger System Print Dialog
-              </button>
-            </div>
+              )}
+              {downloading === "all" ? "Generating PDF..." : "Download All Tickets (PDF)"}
+            </button>
+
+            <p className="text-[10px] text-center text-slate-400">Powered by Otiko.com</p>
           </div>
         )}
+
       </div>
+
+      {/* Ticket Viewer Modal */}
+      {viewingTicket !== null && tickets[viewingTicket] && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto" onClick={() => setViewingTicket(null)}>
+          <div className="max-w-lg w-full mx-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={() => setViewingTicket(null)}
+                className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-full transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">
+              {renderTicketCard(tickets[viewingTicket], viewingTicket, true)}
+              <div className="p-5 pt-0 flex gap-3">
+                <button
+                  onClick={() => { const idx = viewingTicket; setViewingTicket(null); setTimeout(() => handleDownloadTicket(idx), 100); }}
+                  disabled={downloading === viewingTicket}
+                  className="flex-1 bg-slate-900 hover:bg-red-650 text-white font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 transition disabled:bg-slate-300"
+                >
+                  {downloading === viewingTicket ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  Download PDF
+                </button>
+                <button
+                  onClick={() => window.print()}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 transition"
+                >
+                  <Printer className="h-4 w-4" />
+                  Print
+                </button>
+                <button
+                  onClick={() => handleShareTicket(viewingTicket)}
+                  disabled={sharingIndex === viewingTicket}
+                  className={`font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 transition px-4 ${
+                    sharingIndex === viewingTicket
+                      ? "bg-emerald-50 text-emerald-600"
+                      : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                  }`}
+                >
+                  {sharingIndex === viewingTicket ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://otiko.com/sitemap.xml

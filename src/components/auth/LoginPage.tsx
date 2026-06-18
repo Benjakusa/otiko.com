@@ -43,7 +43,7 @@ export default function LoginPage({
       // 2. Load Organizer profile details from Otiko backend system
       const res = await fetch("/api/organizers/me", {
         headers: {
-          "Authorization": `Bearer ${user.uid}`
+          "Authorization": `Bearer ${user.idToken}`
         }
       });
 
@@ -53,8 +53,8 @@ export default function LoginPage({
 
       const organizerData = await res.json();
       
-      // 3. Callback to update parent context state
-      onLoginSuccess(organizerData, user.uid);
+      // 3. Callback to update parent context state with Firebase ID token
+      onLoginSuccess(organizerData, user.idToken);
     } catch (err: any) {
       console.error("Login verification failed:", err);
       // Security Best Practice: Don't reveal which credential was incorrect.

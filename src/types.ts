@@ -66,7 +66,8 @@ export interface Ticket {
   orderId: string;
   eventId: string;
   categoryId: string;
-  ticketNumber: number; // sequential per event
+  ticketNumber: string;
+  verificationCode?: string;
   qrSignature: string;
   pdfUrl?: string;
   status: 'valid' | 'used' | 'cancelled';
@@ -83,6 +84,34 @@ export interface LedgerEntry {
   platformFee: number;
   netAmount: number;
   entryType: 'sale' | 'payout' | 'adjustment';
+  createdAt: string;
+}
+
+export interface PayoutRequest {
+  id: string;
+  organizerId: string;
+  organizerName: string;
+  amount: number;
+  availableBalanceAtRequest: number;
+  paymentMethod: 'mpesa' | 'bank' | 'airtime';
+  accountDetails: string;
+  notes?: string;
+  status: 'pending' | 'approved' | 'rejected' | 'processed';
+  requestedAt: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  processedAt?: string;
+  rejectionReason?: string;
+}
+
+export interface AuditLog {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  actorId: string;
+  actorRole: 'organizer' | 'admin';
+  details: string;
   createdAt: string;
 }
 
