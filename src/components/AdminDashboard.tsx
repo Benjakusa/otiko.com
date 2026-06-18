@@ -110,13 +110,13 @@ export default function AdminDashboard({ token }: AdminDashboardProps) {
                       {pr.status === "pending" && (
                         <div className="flex items-center justify-end gap-1.5">
                           <button onClick={() => doAction(pr.id, "approve")} disabled={actionLoading === pr.id}
-                            className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1 disabled:opacity-50"
+                            className="bg-black hover:bg-red-600 hover:text-black text-white border border-black px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1 disabled:opacity-50"
                           >
                             {actionLoading === pr.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
                             Approve
                           </button>
                           <button onClick={() => setRejectId(rejectId === pr.id ? null : pr.id)}
-                            className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1"
+                            className="bg-black hover:bg-red-600 hover:text-black text-white border border-black px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1"
                           >
                             <XCircle className="h-3 w-3" /> Reject
                           </button>
@@ -124,7 +124,7 @@ export default function AdminDashboard({ token }: AdminDashboardProps) {
                       )}
                       {pr.status === "approved" && (
                         <button onClick={() => doAction(pr.id, "process")} disabled={actionLoading === pr.id}
-                          className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1 ml-auto disabled:opacity-50"
+                          className="bg-black hover:bg-red-600 hover:text-black text-white border border-black px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1 ml-auto disabled:opacity-50"
                         >
                           {actionLoading === pr.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowRight className="h-3 w-3" />}
                           Mark Processed
@@ -161,7 +161,7 @@ export default function AdminDashboard({ token }: AdminDashboardProps) {
               >Cancel</button>
               <button onClick={() => doAction(rejectId, "reject", { reason: rejectReason || "No reason provided" })}
                 disabled={actionLoading === rejectId}
-                className="text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 px-4 py-2 rounded-lg transition flex items-center gap-1.5 disabled:opacity-50"
+                className="text-xs font-semibold text-white bg-black hover:bg-red-600 hover:text-black px-4 py-2 rounded-lg transition flex items-center gap-1.5 disabled:opacity-50"
               >
                 {actionLoading === rejectId ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                 Confirm Rejection

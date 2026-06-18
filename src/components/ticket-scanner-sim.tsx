@@ -1,136 +1,418 @@
-import React, { useState } from "react";
-import { CheckCircle2, AlertCircle, QrCode, ScanLine } from "lucide-react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { CheckCircle2, AlertCircle, X, Loader2, Camera, CameraOff } from "lucide-react";
+import jsQR from "jsqr";
+
+type ScanStatus = "idle" | "valid" | "used" | "invalid" | "error";
 
 interface TicketScannerSimProps {
   onClose: () => void;
+  token: string;
 }
 
-export default function TicketScannerSim({ onClose }: TicketScannerSimProps) {
-  const [ticketInput, setTicketInput] = useState("");
-  const [scannedTicket, setScannedTicket] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+export default function TicketScannerSim({ onClose, token }: TicketScannerSimProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const scanningRef = useRef(false);
+  const cooldownRef = useRef(false);
 
-  const handleVerify = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!ticketInput.trim()) return;
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [status, setStatus] = useState<ScanStatus>("idle");
+  const [scanResult, setScanResult] = useState<{
+    ticketNumber?: string;
+    buyerName?: string;
+    categoryName?: string;
+    eventName?: string;
+    scannedAt?: string;
+    error?: string;
+  } | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
-    setLoading(true);
-    setError(null);
-    setScannedTicket(null);
-
-    // QR payload is JSON: { ticketNumber, verificationCode, eventName, organizerName, eventDate, ticketType, amountPaid, brand }
-    const raw = ticketInput.trim();
-    let ticketNumber = raw;
-    let verificationCode = "";
-
-    try {
-      const parsed = JSON.parse(raw);
-      ticketNumber = parsed.ticketNumber || raw;
-      verificationCode = parsed.verificationCode || "";
-    } catch {
-      // fallback: treat raw input as ticket number
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
     }
+    scanningRef.current = false;
+    setCameraActive(false);
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    stopCamera();
+    setCameraError(null);
+    setStatus("idle");
+    setScanResult(null);
+    cooldownRef.current = false;
 
     try {
-      const response = await fetch(`/api/tickets/verify`, {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { min: 640 }, height: { min: 480 } },
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraActive(true);
+      scanningRef.current = true;
+      requestAnimationFrame(scanFrame);
+    } catch (err: any) {
+      const msg = err.name === "NotAllowedError"
+        ? "Camera permission denied. Please allow camera access in your browser settings."
+        : err.name === "NotFoundError"
+        ? "No camera found on this device."
+        : "Unable to access camera: " + (err.message || "Unknown error");
+      setCameraError(msg);
+      setCameraActive(false);
+    }
+  }, [stopCamera]);
+
+  useEffect(() => {
+    startCamera();
+    return stopCamera;
+  }, [startCamera, stopCamera]);
+
+  const verifyTicket = async (qrData: string) => {
+    if (cooldownRef.current) return;
+    cooldownRef.current = true;
+    scanningRef.current = false;
+    setVerifying(true);
+    setStatus("idle");
+    setScanResult(null);
+
+    let ticketNumber = qrData;
+    let verificationCode = "";
+    try {
+      const parsed = JSON.parse(qrData);
+      ticketNumber = parsed.ticketNumber || qrData;
+      verificationCode = parsed.verificationCode || "";
+    } catch { }
+
+    try {
+      const res = await fetch("/api/tickets/verify", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
         body: JSON.stringify({ ticketNumber, verificationCode }),
       });
+      const data = await res.json();
 
-      const data = await response.json();
-      if (!response.ok || data.valid === false) {
-        setError(data.error || "Failed to verify ticket scan.");
+      if (!res.ok || data.valid === false) {
+        const errMsg = (data.error || "").toLowerCase();
+        if (errMsg.includes("already used") || errMsg.includes("already")) {
+          setStatus("used");
+        } else {
+          setStatus("invalid");
+        }
+        setScanResult({ error: data.error || "Invalid ticket" });
       } else {
-        setScannedTicket(data.ticket);
+        setStatus("valid");
+        setScanResult(data.ticket);
       }
-    } catch (err) {
-      setError("Unable to connect to server.");
+    } catch {
+      setStatus("error");
+      setScanResult({ error: "Unable to connect to server." });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const scanFrame = () => {
+    if (!scanningRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
+      requestAnimationFrame(scanFrame);
+      return;
+    }
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) { requestAnimationFrame(scanFrame); return; }
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+    if (code && code.data.length > 5) {
+      verifyTicket(code.data);
+      return;
+    }
+    requestAnimationFrame(scanFrame);
+  };
+
+  const handleNewScan = () => {
+    cooldownRef.current = false;
+    setStatus("idle");
+    setScanResult(null);
+    scanningRef.current = true;
+    requestAnimationFrame(scanFrame);
+  };
+
+  const statusCard = () => {
+    switch (status) {
+      case "valid":
+        return (
+          <div className="mt-6 bg-emerald-50 border-2 border-emerald-400 rounded-xl p-5 animate-slide-up">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center">
+                <CheckCircle2 className="h-6 w-6 text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-emerald-800">Valid Ticket</p>
+                <p className="text-[10px] text-emerald-600">Gate access granted</p>
+              </div>
+            </div>
+            <div className="border-t border-emerald-200 pt-3 space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-emerald-600 text-[11px]">Ticket</span>
+                <span className="font-bold text-emerald-900 font-mono text-xs">#{scanResult?.ticketNumber}</span>
+              </div>
+              {scanResult?.eventName && (
+                <div className="flex justify-between">
+                  <span className="text-emerald-600 text-[11px]">Event</span>
+                  <span className="font-medium text-emerald-900 text-xs text-right max-w-[200px] truncate">{scanResult.eventName}</span>
+                </div>
+              )}
+              {scanResult?.buyerName && (
+                <div className="flex justify-between">
+                  <span className="text-emerald-600 text-[11px]">Attendee</span>
+                  <span className="font-medium text-emerald-900 text-xs">{scanResult.buyerName}</span>
+                </div>
+              )}
+              {scanResult?.categoryName && (
+                <div className="flex justify-between">
+                  <span className="text-emerald-600 text-[11px]">Category</span>
+                  <span className="font-medium text-emerald-900 text-xs">{scanResult.categoryName}</span>
+                </div>
+              )}
+              {scanResult?.scannedAt && (
+                <div className="flex justify-between">
+                  <span className="text-emerald-600 text-[11px]">Scanned at</span>
+                  <span className="font-medium text-emerald-900 text-xs">{new Date(scanResult.scannedAt).toLocaleTimeString()}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      case "used":
+        return (
+          <div className="mt-6 bg-amber-50 border-2 border-amber-400 rounded-xl p-5 animate-slide-up">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                <AlertCircle className="h-6 w-6 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-amber-800">This ticket has already been used.</p>
+                <p className="text-[10px] text-amber-600">Duplicate scan blocked</p>
+              </div>
+            </div>
+            {scanResult?.error && (
+              <p className="text-xs text-amber-700 bg-amber-100/50 p-2.5 rounded-lg">{scanResult.error}</p>
+            )}
+          </div>
+        );
+      case "invalid":
+        return (
+          <div className="mt-6 bg-red-50 border-2 border-red-400 rounded-xl p-5 animate-slide-up">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <X className="h-6 w-6 text-red-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-red-800">Invalid Ticket</p>
+                <p className="text-[10px] text-red-600">No matching ticket found</p>
+              </div>
+            </div>
+            {scanResult?.error && (
+              <p className="text-xs text-red-700 bg-red-100/50 p-2.5 rounded-lg">{scanResult.error}</p>
+            )}
+          </div>
+        );
+      case "error":
+        return (
+          <div className="mt-6 bg-red-50 border-2 border-red-400 rounded-xl p-5 animate-slide-up">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <AlertCircle className="h-6 w-6 text-red-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-red-800">Connection Error</p>
+                <p className="text-[10px] text-red-600">Please try again</p>
+              </div>
+            </div>
+            {scanResult?.error && (
+              <p className="text-xs text-red-700 bg-red-100/50 p-2.5 rounded-lg">{scanResult.error}</p>
+            )}
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="max-w-lg mx-auto space-y-6 animate-fade-in">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-xl font-extrabold text-slate-900 tracking-tight">Ticket Scanner</h3>
+          <p className="text-xs text-slate-500">Point camera at QR code to verify tickets.</p>
+        </div>
+        <button onClick={onClose}
+          className="text-white bg-black hover:bg-red-600 hover:text-black px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+        >
+          Close
+        </button>
+      </div>
+
+      {/* Camera View */}
+      <div className="bg-black rounded-2xl overflow-hidden shadow-sm border border-slate-200 relative">
+        {cameraError ? (
+          <div className="aspect-[4/3] flex flex-col items-center justify-center bg-slate-100 text-slate-500 p-6 text-center">
+            <CameraOff className="h-10 w-10 mb-3 text-slate-300" />
+            <p className="text-sm font-medium text-slate-700 mb-1">Camera Unavailable</p>
+            <p className="text-xs text-slate-400 max-w-xs">{cameraError}</p>
+            <button
+              onClick={startCamera}
+              className="mt-4 bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold px-4 py-2 rounded-xl transition"
+            >
+              Retry Camera
+            </button>
+          </div>
+        ) : (
+          <>
+            <video
+              ref={videoRef}
+              className="w-full aspect-[4/3] object-cover"
+              playsInline
+              muted
+            />
+            <canvas ref={canvasRef} className="hidden" />
+            {/* Scanning overlay */}
+            <div className="absolute inset-0 pointer-events-none">
+              <div className="w-full h-full flex items-center justify-center">
+                <div className="w-48 h-48 border-2 border-white/60 rounded-xl shadow-[0_0_0_9999px_rgba(0,0,0,0.3)]" />
+              </div>
+            </div>
+            {!cameraActive && !verifying && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                <Loader2 className="h-8 w-8 animate-spin text-white" />
+              </div>
+            )}
+          </>
+        )}
+
+        {verifying && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+            <div className="text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-white mx-auto mb-2" />
+              <p className="text-white text-sm font-medium">Verifying...</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Result Card */}
+      {status !== "idle" && scanResult && (
+        <div className="relative">
+          {statusCard()}
+          <button
+            onClick={handleNewScan}
+            className="mt-3 w-full bg-black hover:bg-red-600 hover:text-black text-white font-bold py-3 rounded-xl text-sm transition flex items-center justify-center gap-2"
+          >
+            <Camera className="h-4 w-4" />
+            Scan Next Ticket
+          </button>
+        </div>
+      )}
+
+      {/* Status indicator when idle */}
+      {status === "idle" && cameraActive && (
+        <div className="flex items-center justify-center gap-2 text-xs text-slate-400">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          Camera active — waiting for QR code
+        </div>
+      )}
+
+      {/* Manual override */}
+      <details className="bg-slate-50 rounded-xl border border-slate-200">
+        <summary className="text-[11px] font-semibold text-slate-500 p-4 cursor-pointer hover:text-slate-700 transition select-none">
+          Manual entry (if camera is unavailable)
+        </summary>
+        <div className="px-4 pb-4">
+          <p className="text-[10px] text-slate-400 mb-2">Paste the QR code content manually:</p>
+          <ManualEntryForm token={token} onResult={(s, r) => { setStatus(s); setScanResult(r); }} />
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function ManualEntryForm({ token, onResult: showResult }: {
+  token: string;
+  onResult: (status: ScanStatus, result: any) => void;
+}) {
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+    setLoading(true);
+
+    let ticketNumber = input.trim();
+    let verificationCode = "";
+    try {
+      const parsed = JSON.parse(input.trim());
+      ticketNumber = parsed.ticketNumber || ticketNumber;
+      verificationCode = parsed.verificationCode || "";
+    } catch { }
+
+    try {
+      const res = await fetch("/api/tickets/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ ticketNumber, verificationCode }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.valid === false) {
+        const errMsg = (data.error || "").toLowerCase();
+        if (errMsg.includes("already used") || errMsg.includes("already")) {
+          showResult("used", data);
+        } else {
+          showResult("invalid", data);
+        }
+      } else {
+        showResult("valid", data.ticket);
+      }
+    } catch {
+      showResult("error", { error: "Unable to connect to server." });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in">
-      <div className="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl">
-        <div className="p-6 border-b border-slate-200 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <ScanLine className="h-6 w-6 text-emerald-600" />
-            <h3 className="font-semibold text-lg text-slate-900">Ticket Validator</h3>
-          </div>
-          <button 
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-900 text-sm bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition"
-          >
-            Close
-          </button>
-        </div>
-
-        <div className="p-6">
-          <p className="text-sm text-slate-500 mb-6">
-            Paste the ticket code from the QR code to verify ticket authenticity at the gate.
-          </p>
-
-          <form onSubmit={handleVerify} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">
-                Ticket Code
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder='e.g. {"ticketNumber":"OTK-6A9F3K","verificationCode":"a1b2c3d4"}'
-                  value={ticketInput}
-                  onChange={(e) => setTicketInput(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono placeholder:text-slate-400 focus:outline-none transition"
-                />
-                <QrCode className="absolute right-3 top-3 h-5 w-5 text-slate-400" />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || !ticketInput.trim()}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-3 rounded-xl disabled:bg-slate-200 disabled:text-slate-400 transition duration-150"
-            >
-              {loading ? "Verifying..." : "Verify Ticket"}
-            </button>
-          </form>
-
-          {scannedTicket && (
-            <div className="mt-8 bg-emerald-50 border border-emerald-200 rounded-xl p-5 space-y-3 animate-slide-up">
-              <div className="flex items-center gap-2 text-emerald-700 font-medium text-sm">
-                <CheckCircle2 className="h-5 w-5" />
-                Access Approved
-              </div>
-              <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-xs border-t border-emerald-200 pt-3 text-slate-600">
-                <span className="text-slate-500">Event:</span>
-                <span className="font-medium text-slate-900">{scannedTicket.eventName}</span>
-                <span className="text-slate-500">Attendee:</span>
-                <span className="text-slate-900">{scannedTicket.buyerName}</span>
-                <span className="text-slate-500">Category:</span>
-                <span className="text-slate-900">{scannedTicket.categoryName}</span>
-                <span className="text-slate-500">Ticket:</span>
-                <span className="text-slate-900">#{scannedTicket.ticketNumber}</span>
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="mt-8 bg-red-50 border border-red-200 rounded-xl p-5 text-sm space-y-2 animate-shake">
-              <div className="flex items-center gap-2 text-red-600 font-medium">
-                <AlertCircle className="h-5 w-5" />
-                Access Denied
-              </div>
-              <p className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded border border-red-100">
-                {error}
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <form onSubmit={handleSubmit} className="flex gap-2">
+      <input
+        type="text"
+        placeholder="Paste QR data..."
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:border-slate-900"
+      />
+      <button
+        type="submit"
+        disabled={loading || !input.trim()}
+        className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold px-3 py-2 rounded-lg transition disabled:opacity-50"
+      >
+        {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Verify"}
+      </button>
+    </form>
   );
 }

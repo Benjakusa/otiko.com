@@ -113,6 +113,7 @@ async function getOrganizerByToken(req: express.Request): Promise<Organizer | nu
       return organizers.find(o => o.firebaseUid === decoded.uid) || null;
     } catch (err) {
       console.warn("[Auth] verifyIdToken failed:", (err as Error).message);
+      return null;
     }
   }
 
@@ -284,9 +285,16 @@ app.post("/api/organizers/upload-kyc", async (req, res) => {
 });
 
 // --- EVENTS & CATEGORIES ---
-app.get("/api/events", (req, res) => {
+app.get("/api/events", async (req, res) => {
   const { status, search } = req.query;
   let filtered = [...events];
+
+  // If authenticated, filter events to only this organizer's events
+  const org = await getOrganizerByToken(req);
+  if (org) {
+    filtered = filtered.filter(e => e.organizerId === org.id);
+  }
+
   if (status) filtered = filtered.filter(e => e.status === status);
   if (search) {
     const q = String(search).toLowerCase();
@@ -593,6 +601,7 @@ async function triggerSimulatedCallback(payload: any) {
 }
 
 app.post("/api/mpesa/simulated-callback", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const { checkoutRequestId, success } = req.body;
   const order = orders.find(o => o.mpesaCheckoutRequestId === checkoutRequestId);
   if (!order) return res.status(404).json({ error: "Order checkout code not found" });
@@ -630,6 +639,15 @@ app.post("/api/tickets/verify", async (req, res) => {
     t.verificationCode === verificationCode
   );
   if (!ticket) return res.status(404).json({ valid: false, error: "Invalid ticket" });
+
+  // Verify the ticket's event belongs to the authenticated organizer
+  const org = await getOrganizerByToken(req);
+  if (org) {
+    const evt = events.find(e => e.id === ticket.eventId);
+    if (!evt || evt.organizerId !== org.id) {
+      return res.status(403).json({ valid: false, error: "This ticket does not belong to your event" });
+    }
+  }
 
   if (ticket.status !== "valid") {
     return res.json({ valid: false, error: `Ticket already ${ticket.status.toUpperCase()}`, usedAt: ticket.usedAt });
@@ -782,17 +800,16 @@ app.get("/api/admin/payout-requests", async (req, res) => {
 });
 
 app.post("/api/admin/payout-requests/:id/approve", async (req, res) => {
-  const adminOrg = await getOrganizerByToken(req);
-  if (!adminOrg && !await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const pr = payoutRequests.find(p => p.id === req.params.id);
   if (!pr) return res.status(404).json({ error: "Payout request not found" });
   if (pr.status !== "pending") return res.status(400).json({ error: `Request is already ${pr.status}` });
 
   pr.status = "approved";
   pr.approvedAt = new Date().toISOString();
-  pr.approvedBy = adminOrg?.id || "admin";
+  pr.approvedBy = "admin";
   await syncUpdate("payoutRequests", pr.id, { status: "approved", approvedAt: pr.approvedAt, approvedBy: pr.approvedBy });
-  await addAuditLog("payout_request_approved", "payout_request", pr.id, adminOrg?.id || "admin", "admin", `Approved KES ${pr.amount}`);
+  await addAuditLog("payout_request_approved", "payout_request", pr.id, "admin", "admin", `Approved KES ${pr.amount}`);
 
   const org = organizers.find(o => o.id === pr.organizerId);
   if (org) sendEmail(org.email, "Payout Request Approved",
@@ -802,8 +819,7 @@ app.post("/api/admin/payout-requests/:id/approve", async (req, res) => {
 });
 
 app.post("/api/admin/payout-requests/:id/reject", async (req, res) => {
-  const adminOrg = await getOrganizerByToken(req);
-  if (!adminOrg && !await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const pr = payoutRequests.find(p => p.id === req.params.id);
   if (!pr) return res.status(404).json({ error: "Payout request not found" });
   if (pr.status !== "pending") return res.status(400).json({ error: `Request is already ${pr.status}` });
@@ -812,7 +828,7 @@ app.post("/api/admin/payout-requests/:id/reject", async (req, res) => {
   pr.status = "rejected";
   pr.rejectionReason = reason || "No reason provided";
   await syncUpdate("payoutRequests", pr.id, { status: "rejected", rejectionReason: pr.rejectionReason });
-  await addAuditLog("payout_request_rejected", "payout_request", pr.id, adminOrg?.id || "admin", "admin", `Rejected KES ${pr.amount}: ${pr.rejectionReason}`);
+  await addAuditLog("payout_request_rejected", "payout_request", pr.id, "admin", "admin", `Rejected KES ${pr.amount}: ${pr.rejectionReason}`);
 
   const org = organizers.find(o => o.id === pr.organizerId);
   if (org) sendEmail(org.email, "Payout Request Rejected",
@@ -822,8 +838,7 @@ app.post("/api/admin/payout-requests/:id/reject", async (req, res) => {
 });
 
 app.post("/api/admin/payout-requests/:id/process", async (req, res) => {
-  const adminOrg = await getOrganizerByToken(req);
-  if (!adminOrg && !await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const pr = payoutRequests.find(p => p.id === req.params.id);
   if (!pr) return res.status(404).json({ error: "Payout request not found" });
   if (pr.status !== "approved") return res.status(400).json({ error: "Request must be approved before processing" });
@@ -850,7 +865,7 @@ app.post("/api/admin/payout-requests/:id/process", async (req, res) => {
   ledgerEntries.push(entry);
   await syncSet("ledgerEntries", entry.id, entry);
 
-  await addAuditLog("payout_request_processed", "payout_request", pr.id, adminOrg?.id || "admin", "admin", `Processed KES ${pr.amount}`);
+  await addAuditLog("payout_request_processed", "payout_request", pr.id, "admin", "admin", `Processed KES ${pr.amount}`);
 
   const org = organizers.find(o => o.id === pr.organizerId);
   if (org) sendEmail(org.email, "Payout Successfully Processed",

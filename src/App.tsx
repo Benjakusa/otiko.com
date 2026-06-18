@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { 
   Building, Calendar, MapPin, Ticket as TicketIcon, Phone, Mail, 
   User, CheckCircle2, AlertTriangle, Loader2, RefreshCw, X, Download, QrCode,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Event, Order, Ticket, LedgerEntry, Payout, Organizer } from "./types";
 import PublicBuyFlow from "./components/public-buy-flow";
+import TicketScannerSim from "./components/ticket-scanner-sim";
 import SignupPage from "./components/auth/SignupPage";
 import LoginPage from "./components/auth/LoginPage";
 import ForgotPasswordPage from "./components/auth/ForgotPasswordPage";
@@ -24,7 +25,7 @@ import AdminDashboard from "./components/AdminDashboard";
 export default function App() {
   // Navigation Tabs state
   // "public" | "dashboard" | "events" | "wallet" | "kyc" | "admin" | "login" | "signup" | "forgot-password" | "policies"
-  const [activeTab, setActiveTab] = useState<"public" | "dashboard" | "events" | "wallet" | "kyc" | "admin" | "login" | "signup" | "forgot-password" | "policies">("public");
+  const [activeTab, setActiveTab] = useState<"public" | "dashboard" | "events" | "wallet" | "kyc" | "scanner" | "admin" | "login" | "signup" | "forgot-password" | "policies">("public");
   const [activePolicyTab, setActivePolicyTab] = useState<PolicySection>("refund");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
@@ -59,7 +60,7 @@ export default function App() {
   }, [adminPassword]);
 
   // Guard: redirect unauthenticated users to login when accessing restricted tabs
-  const restrictedTabs = ["dashboard", "events", "wallet", "kyc", "admin"];
+  const restrictedTabs = ["dashboard", "events", "wallet", "kyc", "scanner", "admin"];
   useEffect(() => {
     if (restrictedTabs.includes(activeTab) && token === "user-default-uid") {
       const checkAuth = async () => {
@@ -154,7 +155,7 @@ export default function App() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // 1. Fetch events
+      // 1. Fetch all events for public view
       const eventsRes = await fetch("/api/events");
       if (eventsRes.ok) {
         const eventsData = await eventsRes.json();
@@ -483,15 +484,26 @@ export default function App() {
 
 
 
-  // Safe polling trigger for events grid search filters
-  const filteredEvents = events.filter(evt => {
+  // Events scoped to the current organizer (for dashboard/events tab)
+  const myEvents = useMemo(() =>
+    organizer ? events.filter(e => e.organizerId === organizer.id) : [],
+  [events, organizer]);
+
+  // Search-filtered version of myEvents for the events management tab
+  const myFilteredEvents = myEvents.filter(evt => {
     const query = searchQuery.toLowerCase();
     const matchesSearch = evt.name?.toLowerCase().includes(query) || evt.venue?.toLowerCase().includes(query);
     if (selectedStatusFilter === "all") return matchesSearch;
     return matchesSearch && evt.status === selectedStatusFilter;
   });
 
-
+  // Search-filtered version of all events for the public view
+  const filteredEvents = events.filter(evt => {
+    const query = searchQuery.toLowerCase();
+    const matchesSearch = evt.name?.toLowerCase().includes(query) || evt.venue?.toLowerCase().includes(query);
+    if (selectedStatusFilter === "all") return matchesSearch;
+    return matchesSearch && evt.status === selectedStatusFilter;
+  });
 
   if (activeTab === "login") {
     return (
@@ -545,7 +557,7 @@ export default function App() {
     <div className="flex h-screen w-full bg-[#F3F4F6] font-sans text-slate-800 overflow-hidden">
       
       {/* SIDEBAR MOBILE BACKDROP */}
-      {!["public", "login", "signup", "forgot-password", "policies"].includes(activeTab) && mobileSidebarOpen && (
+      {!["public", "login", "signup", "forgot-password", "policies", "admin"].includes(activeTab) && mobileSidebarOpen && (
         <div 
           className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 md:hidden transition-opacity duration-300"
           onClick={() => setMobileSidebarOpen(false)}
@@ -553,7 +565,7 @@ export default function App() {
       )}
 
       {/* 1. SIDEBAR NAVIGATION */}
-      {!["public", "login", "signup", "forgot-password", "policies"].includes(activeTab) && (
+      {!["public", "login", "signup", "forgot-password", "policies", "admin"].includes(activeTab) && (
         <aside className={`bg-white flex flex-col h-full border-r border-slate-200 shrink-0 text-slate-700 transition-all duration-300 z-50
           fixed inset-y-0 left-0 w-64 md:relative md:inset-auto md:translate-x-0
           ${mobileSidebarOpen ? "translate-x-0 animate-fade-in" : "-translate-x-full"}
@@ -619,6 +631,18 @@ export default function App() {
               <ShieldCheck className="h-4 w-4 shrink-0" />
               <span className="md:hidden lg:inline">Verification</span>
             </button>
+
+            <button
+              onClick={() => setActiveTab("scanner")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all md:justify-center lg:justify-start ${
+                activeTab === "scanner"
+                  ? "bg-slate-100 text-slate-900 shadow-sm font-semibold"
+                  : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              }`}
+            >
+              <ScanLine className="h-4 w-4 shrink-0" />
+              <span className="md:hidden lg:inline">Scan Ticket</span>
+            </button>
           </nav>
         </aside>
       )}
@@ -656,7 +680,7 @@ export default function App() {
               {/* Admin login link */}
               <button
                 onClick={() => setShowAdminLogin(true)}
-                className="text-xs font-semibold text-slate-500 hover:text-red-600 border border-slate-200 hover:border-red-300 px-3 py-1.5 rounded-lg transition cursor-pointer"
+                className="text-xs font-semibold text-white bg-black hover:bg-red-600 hover:text-black border border-black hover:border-red-600 px-3 py-1.5 rounded-lg transition cursor-pointer"
                 title="Admin Login"
               >
                 Admin
@@ -665,7 +689,7 @@ export default function App() {
               {/* Profile icon to open event organizers sign-up/sign-in portal */}
               <button
                 onClick={() => setActiveTab("login")}
-                className="w-9 h-9 rounded-full bg-[#0F172A] hover:bg-red-650 hover:scale-105 active:scale-95 text-white flex items-center justify-center transition shadow-sm cursor-pointer"
+                className="w-9 h-9 rounded-full bg-black hover:bg-red-600 hover:text-black hover:scale-105 active:scale-95 text-white flex items-center justify-center transition shadow-sm cursor-pointer"
                 title="Event Organizer Workspace"
               >
                 <User className="h-4.5 w-4.5 text-white" />
@@ -684,14 +708,14 @@ export default function App() {
               </button>
 
               <h2 className="text-sm sm:text-base font-bold text-slate-900 select-none">
-                {organizer?.name || "Organizer"}
+                {activeTab === "admin" ? "Admin" : organizer?.name || "Organizer"}
               </h2>
             </div>
 
             <div className="flex items-center gap-2 sm:gap-4">
               <button
                 onClick={() => setActiveTab("public")}
-                className="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1 px-2 py-1.5 sm:px-2.5 sm:py-1.5 border border-slate-200 hover:border-slate-300 rounded-lg transition bg-white cursor-pointer"
+                className="text-xs font-semibold text-white bg-black hover:bg-red-600 hover:text-black flex items-center gap-1 px-2 py-1.5 sm:px-2.5 sm:py-1.5 border border-black hover:border-red-600 rounded-lg transition cursor-pointer"
               >
                 <ExternalLink className="h-3.5 w-3.5 text-slate-400" />
                 <span className="hidden xs:inline">Exit Workspace</span>
@@ -746,7 +770,7 @@ export default function App() {
                           const el = document.getElementById("hero-search-input");
                           if (el) el.focus();
                         }}
-                        className="bg-red-650 hover:bg-red-700 text-white font-bold text-xs px-6 py-3 rounded-xl flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer shrink-0 w-full sm:w-auto"
+                        className="bg-black hover:bg-red-600 hover:text-black text-white font-bold text-xs px-6 py-3 rounded-xl flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer shrink-0 w-full sm:w-auto"
                       >
                         <Search className="h-4 w-4" />
                         <span>Search</span>
@@ -874,7 +898,7 @@ export default function App() {
                               <button
                                 onClick={() => setSelectedEvent(evt)}
                                 disabled={isSoldOut || evt.status !== "active"}
-                                className="bg-[#0F172A] hover:bg-red-600 text-white text-xs font-semibold py-2 px-4 rounded-lg group-hover:bg-red-600 transition"
+                                className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-semibold py-2 px-4 rounded-lg transition"
                               >
                                 {isSoldOut ? "Tickets Depleted" : "Buy Ticket Fast"}
                               </button>
@@ -916,7 +940,7 @@ export default function App() {
                     setActiveTab("events");
                     setShowAddEvent(true);
                   }}
-                  className="bg-red-650 hover:bg-red-700 text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                  className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center gap-1.5 transition shadow-sm cursor-pointer"
                 >
                   <Plus className="h-4 w-4" /> Create New Event
                 </button>
@@ -932,7 +956,7 @@ export default function App() {
                     <Calendar className="h-4.5 w-4.5 text-slate-400 shrink-0" />
                   </div>
                   <div className="mt-4">
-                    <p className="text-3xl font-extrabold text-slate-900 tracking-tight">{events.length}</p>
+                    <p className="text-3xl font-extrabold text-slate-900 tracking-tight">{myEvents.length}</p>
                     <p className="text-[10px] text-slate-400 font-medium mt-1">Created on Otiko portal</p>
                   </div>
                 </div>
@@ -1008,7 +1032,7 @@ export default function App() {
                       }}
                       className="text-[10px] font-bold text-slate-400 hover:text-slate-600 tracking-wider uppercase transition"
                     >
-                      View All ({events.length})
+                      View All ({myEvents.length})
                     </button>
                   </div>
 
@@ -1017,10 +1041,10 @@ export default function App() {
                       Array.from({ length: 3 }).map((_, i) => (
                         <div key={i} className="flex gap-3 items-center shimmer-bg h-14 rounded-xl"></div>
                       ))
-                    ) : events.length === 0 ? (
+                    ) : myEvents.length === 0 ? (
                       <p className="text-xs text-slate-400 text-center py-6">No events created yet. Add one in the Events tab!</p>
                     ) : (
-                      events.slice(0, 3).map((evt) => (
+                      myEvents.slice(0, 3).map((evt) => (
                         <div 
                           key={evt.id} 
                           className="flex gap-3 items-center justify-between p-2.5 hover:bg-slate-50 rounded-xl transition group relative cursor-pointer"
@@ -1119,7 +1143,7 @@ export default function App() {
 
                 <button
                   onClick={() => setShowAddEvent(!showAddEvent)}
-                  className="bg-slate-950 hover:bg-slate-800 text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center gap-2 transition cursor-pointer"
+                  className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center gap-2 transition cursor-pointer"
                 >
                   {showAddEvent ? "Hide Form" : <><Plus className="h-4 w-4" /> Add Custom Event</>}
                 </button>
@@ -1313,7 +1337,7 @@ export default function App() {
                     </button>
                     <button
                       type="submit"
-                      className="bg-red-650 hover:bg-red-700 text-white text-xs font-bold py-2 px-5 rounded-xl transition shadow-sm"
+                      className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold py-2 px-5 rounded-xl transition shadow-sm"
                     >
                       Publish Live Ticket Sales
                     </button>
@@ -1329,7 +1353,7 @@ export default function App() {
                     Registered Events Directory
                   </h4>
                   <span className="text-[10px] font-bold text-slate-400">
-                    Showing Page {eventsPage} of {Math.max(1, Math.ceil(filteredEvents.length / eventsPageSize))}
+                    Showing Page {eventsPage} of {Math.max(1, Math.ceil(myFilteredEvents.length / eventsPageSize))}
                   </span>
                 </div>
 
@@ -1352,14 +1376,14 @@ export default function App() {
                             <td colSpan={6} className="shimmer-bg my-2 rounded"></td>
                           </tr>
                         ))
-                      ) : filteredEvents.length === 0 ? (
+                      ) : myFilteredEvents.length === 0 ? (
                         <tr>
                           <td colSpan={6} className="py-12 text-center text-slate-400 text-xs">
                             No matching organic events found in client portfolio workspace scope.
                           </td>
                         </tr>
                       ) : (
-                        filteredEvents.slice((eventsPage - 1) * eventsPageSize, eventsPage * eventsPageSize).map((evt) => {
+                        myFilteredEvents.slice((eventsPage - 1) * eventsPageSize, eventsPage * eventsPageSize).map((evt) => {
                           const isCancelled = evt.status === "cancelled";
                           return (
                             <tr key={evt.id} className="hover:bg-slate-50/50 transition">
@@ -1464,7 +1488,7 @@ export default function App() {
                 </div>
 
                 {/* PAGINATION PANEL FOR EVENTS */}
-                {filteredEvents.length > eventsPageSize && (
+                {myFilteredEvents.length > eventsPageSize && (
                   <div className="flex justify-between items-center pt-3 border-t border-slate-100">
                     <button
                       disabled={eventsPage === 1}
@@ -1474,7 +1498,7 @@ export default function App() {
                       Previous Page
                     </button>
                     <div className="flex gap-1.5">
-                      {Array.from({ length: Math.ceil(filteredEvents.length / eventsPageSize) }).map((_, idx) => (
+                      {Array.from({ length: Math.ceil(myFilteredEvents.length / eventsPageSize) }).map((_, idx) => (
                         <button
                           key={idx}
                           onClick={() => setEventsPage(idx + 1)}
@@ -1487,7 +1511,7 @@ export default function App() {
                       ))}
                     </div>
                     <button
-                      disabled={eventsPage * eventsPageSize >= filteredEvents.length}
+                      disabled={eventsPage * eventsPageSize >= myFilteredEvents.length}
                       onClick={() => setEventsPage(p => p + 1)}
                       className="px-3 py-1 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 disabled:opacity-50 disabled:hover:bg-slate-50 rounded-lg text-xs font-bold transition shrink-0 cursor-pointer"
                     >
@@ -1607,13 +1631,24 @@ export default function App() {
 
                         {/* Guest Download Action */}
                         <div className="space-y-2">
-                          <a 
-                            href={`/api/events/${viewingEventDetail.eventCode}/tickets?export=csv&token=${token}`}
-                            download={`attendees_${viewingEventDetail.eventCode}.csv`}
-                            className="w-full bg-slate-950 hover:bg-slate-850 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                          <button 
+                            onClick={async () => {
+                              const res = await fetch(`/api/events/${viewingEventDetail.eventCode}/tickets?export=csv`, {
+                                headers: { "Authorization": `Bearer ${token}` }
+                              });
+                              if (!res.ok) return;
+                              const blob = await res.blob();
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = `attendees_${viewingEventDetail.eventCode}.csv`;
+                              a.click();
+                              URL.revokeObjectURL(url);
+                            }}
+                            className="w-full bg-black hover:bg-red-600 hover:text-black text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer"
                           >
                             <Download className="h-4 w-4" /> Download Attendee Guest CSV
-                          </a>
+                          </button>
                           <button
                             type="button"
                             onClick={() => {
@@ -1734,7 +1769,7 @@ export default function App() {
                       </button>
                       <button
                         type="submit"
-                        className="bg-slate-900 hover:bg-red-650 text-white text-xs font-bold py-2 px-5 rounded-lg transition"
+                        className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold py-2 px-5 rounded-lg transition"
                       >
                         Publish Changes
                       </button>
@@ -1767,7 +1802,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={handleDeleteEvent}
-                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-semibold text-sm transition shadow-sm cursor-pointer"
+                        className="bg-black hover:bg-red-600 hover:text-black text-white px-4 py-2 rounded-lg font-semibold text-sm transition shadow-sm cursor-pointer"
                       >
                         Cancel Event
                       </button>
@@ -1877,7 +1912,7 @@ export default function App() {
                     <button
                       type="submit"
                       disabled={payoutLoading || !payoutAmount}
-                      className="w-full bg-[#0F172A] hover:bg-slate-800 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                      className="w-full bg-black hover:bg-red-600 hover:text-black disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                     >
                       {payoutLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4 text-emerald-400" />}
                       Request Payout
@@ -2125,7 +2160,7 @@ export default function App() {
                     <div className="border-t border-slate-100 pt-4 flex justify-end">
                       <button
                         type="submit"
-                        className="bg-slate-900 hover:bg-red-650 text-white font-bold py-2 px-5 rounded-xl text-xs transition cursor-pointer"
+                        className="bg-black hover:bg-red-600 hover:text-black text-white font-bold py-2 px-5 rounded-xl text-xs transition cursor-pointer"
                       >
                         Update Profile Coordinates
                       </button>
@@ -2191,7 +2226,7 @@ export default function App() {
                       <button
                         type="submit"
                         disabled={kycLoading || !kycBusinessName}
-                        className="w-full bg-red-650 hover:bg-red-700 disabled:opacity-50 text-white font-bold py-2 rounded-xl text-xs transition cursor-pointer flex justify-center items-center gap-1.5"
+                        className="w-full bg-black hover:bg-red-600 hover:text-black disabled:opacity-50 text-white font-bold py-2 rounded-xl text-xs transition cursor-pointer flex justify-center items-center gap-1.5"
                       >
                         {kycLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                         Submit Verification Dossier
@@ -2203,6 +2238,11 @@ export default function App() {
               </div>
 
             </div>
+          )}
+
+          {/* ==================================== TAB: TICKET SCANNER ==================================== */}
+          {activeTab === "scanner" && (
+            <TicketScannerSim onClose={() => setActiveTab("dashboard")} token={token} />
           )}
 
           {/* ==================================== TAB: ADMIN DASHBOARD ==================================== */}
@@ -2249,13 +2289,13 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => { setShowAdminLogin(false); setAdminPassword(""); setAdminLoginError(""); }}
-                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
+                  className="flex-1 bg-black hover:bg-red-600 hover:text-black text-white font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 bg-slate-900 hover:bg-red-600 text-white font-bold py-2.5 rounded-lg text-sm transition cursor-pointer"
+                  className="flex-1 bg-black hover:bg-red-600 hover:text-black text-white font-bold py-2.5 rounded-lg text-sm transition cursor-pointer"
                 >
                   Login
                 </button>
