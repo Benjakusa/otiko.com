@@ -9,7 +9,7 @@ sys.path.append("/backend")
 sys.path.append("/app")
 
 # Sync PostgreSQL or local SQLite driver URL parsing
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://app_user:secure_password_132@localhost:5432/otiko_db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL.startswith("postgresql+asyncpg"):
     DATABASE_URL = DATABASE_URL.replace("postgresql+asyncpg", "postgresql")
 

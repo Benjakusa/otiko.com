@@ -4,6 +4,7 @@ import crypto from "crypto";
 import fs from "fs";
 import multer from "multer";
 import sharp from "sharp";
+import { PDFDocument } from "pdf-lib";
 import nodemailer from "nodemailer";
 import { createServer as createViteServer } from "vite";
 import { initializeApp as initFirebase, cert } from "firebase-admin";
@@ -16,7 +17,7 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
-const TICKET_SECRET = process.env.TICKET_SECRET || "otiko-shared-signing-secret-2026";
+const TICKET_SECRET = process.env.TICKET_SECRET;
 
 function generateTicketNumber(): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -243,10 +244,12 @@ app.post("/api/organizers/register", async (req, res) => {
   const existing = organizers.find(o => o.firebaseUid === firebaseUid || o.email === email);
   if (existing) return res.json(existing);
 
+  const isAdminUser = email === process.env.ADMIN_EMAIL;
   const newOrg: Organizer = {
     id: `org-${docId()}`, firebaseUid, name, email,
     phone: phone || "", businessName: businessName || name,
     kycStatus: "pending", mpesaPayoutNumber: mpesaPayoutNumber || "",
+    role: isAdminUser ? "admin" : "organizer",
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
 
@@ -276,11 +279,40 @@ app.patch("/api/organizers/me", async (req, res) => {
   res.json(org);
 });
 
-app.post("/api/organizers/upload-kyc", async (req, res) => {
+app.post("/api/organizers/upload-kyc", upload.single("kycDocument"), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
+
+  const kraPin = req.body.kraPin || "";
+  let kycDocUrl = org.kycDocUrl || "";
+
+  if (req.file) {
+    if (req.file.mimetype !== "application/pdf") {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: "Only PDF files are accepted" });
+    }
+    if (req.file.size > 3 * 1024 * 1024) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: "File exceeds 3MB limit" });
+    }
+    // Compress PDF using pdf-lib
+    try {
+      const originalBytes = fs.readFileSync(req.file.path);
+      const pdfDoc = await PDFDocument.load(originalBytes, { ignoreEncryption: true });
+      const compressedBytes = await pdfDoc.save({ useObjectStreams: true });
+      if (compressedBytes.length < originalBytes.length) {
+        fs.writeFileSync(req.file.path, compressedBytes);
+      }
+    } catch (pdfErr) {
+      console.warn("[KYC] PDF compression skipped:", (pdfErr as Error).message);
+    }
+    kycDocUrl = `/uploads/${req.file.filename}`;
+  }
+
   org.kycStatus = "pending";
-  await syncUpdate("organizers", org.id, { kycStatus: "pending" });
+  org.kraPin = kraPin;
+  org.kycDocUrl = kycDocUrl;
+  await syncUpdate("organizers", org.id, { kycStatus: "pending", kraPin, kycDocUrl });
   res.json({ message: "KYC documents submitted for review", organizer: org });
 });
 
@@ -778,16 +810,84 @@ app.post("/api/wallet/payout-request", async (req, res) => {
   res.status(201).json(newReq);
 });
 
+// --- ADMIN: ORGANIZER MANAGEMENT ---
+app.get("/api/admin/organizers", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  res.json(organizers.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+});
+
+app.patch("/api/admin/organizers/:id", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  const org = organizers.find(o => o.id === req.params.id);
+  if (!org) return res.status(404).json({ error: "Organizer not found" });
+  const { kycStatus, role } = req.body;
+  if (kycStatus) org.kycStatus = kycStatus;
+  if (role) org.role = role;
+  org.updatedAt = new Date().toISOString();
+  await syncUpdate("organizers", org.id, { kycStatus: org.kycStatus, role: org.role, updatedAt: org.updatedAt });
+  await addAuditLog("organizer_updated", "organizer", org.id, "admin", "admin", `Updated ${org.name}: KYC=${org.kycStatus}, Role=${org.role}`);
+  res.json(org);
+});
+
+app.delete("/api/admin/organizers/:id", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  const idx = organizers.findIndex(o => o.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "Organizer not found" });
+  const removed = organizers.splice(idx, 1)[0];
+  await syncDelete("organizers", removed.id);
+  await addAuditLog("organizer_deleted", "organizer", removed.id, "admin", "admin", `Deleted organizer ${removed.name} (${removed.email})`);
+  res.json({ success: true });
+});
+
+// --- ADMIN: EVENT MANAGEMENT ---
+app.get("/api/admin/events", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  res.json(events.sort((a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime()));
+});
+
+app.patch("/api/admin/events/:id", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  const evt = events.find(e => e.id === req.params.id);
+  if (!evt) return res.status(404).json({ error: "Event not found" });
+  const { status } = req.body;
+  if (status) evt.status = status;
+  await syncUpdate("events", evt.id, { status: evt.status });
+  await addAuditLog("event_updated", "event", evt.id, "admin", "admin", `Updated event ${evt.name}: status=${evt.status}`);
+  res.json(evt);
+});
+
+app.delete("/api/admin/events/:id", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  const idx = events.findIndex(e => e.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: "Event not found" });
+  const removed = events.splice(idx, 1)[0];
+  await syncDelete("events", removed.id);
+  await addAuditLog("event_deleted", "event", removed.id, "admin", "admin", `Deleted event ${removed.name}`);
+  res.json({ success: true });
+});
+
+// --- ADMIN: TICKET MANAGEMENT ---
+app.get("/api/admin/tickets", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  res.json(tickets.sort((a, b) => new Date(b.issuedAt || b.id).getTime() - new Date(a.issuedAt || a.id).getTime()));
+});
+
+// --- ADMIN: AUDIT LOGS ---
+app.get("/api/admin/audit-logs", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  res.json(auditLogs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+});
+
 // --- ADMIN: PAYOUT REQUEST MANAGEMENT ---
 async function isAdmin(req: express.Request): Promise<boolean> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) return false;
   const token = authHeader.split(" ")[1];
-  if (token === "admin-token-2026") return true;
   if (!firebaseAuth) return false;
   try {
     const decoded = await firebaseAuth.verifyIdToken(token);
-    return !!(decoded && (decoded as any).admin);
+    const org = organizers.find(o => o.firebaseUid === decoded.uid);
+    return !!(org && org.role === "admin");
   } catch { return false; }
 }
 

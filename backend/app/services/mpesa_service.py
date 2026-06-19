@@ -14,11 +14,11 @@ class MpesaError(Exception):
 class MpesaService:
     def __init__(self, redis_client: Redis):
         self.redis = redis_client
-        self.consumer_key = os.environ.get("MPESA_CONSUMER_KEY", "mock_key")
-        self.consumer_secret = os.environ.get("MPESA_CONSUMER_SECRET", "mock_secret")
-        self.passkey = os.environ.get("MPESA_PASSKEY", "mock_passkey")
-        self.shortcode = os.environ.get("MPESA_SHORTCODE", "174379")
-        self.callback_url = os.environ.get("MPESA_CALLBACK_URL", "https://otiko.com/api/mpesa/callback")
+        self.consumer_key = os.environ.get("MPESA_CONSUMER_KEY", "")
+        self.consumer_secret = os.environ.get("MPESA_CONSUMER_SECRET", "")
+        self.passkey = os.environ.get("MPESA_PASSKEY", "")
+        self.shortcode = os.environ.get("MPESA_SHORTCODE", "")
+        self.callback_url = os.environ.get("MPESA_CALLBACK_URL", "")
         self.environment = os.environ.get("MPESA_ENV", "sandbox")
         self.base_url = "https://sandbox.safaricom.co.ke" if self.environment == "sandbox" else "https://api.safaricom.co.ke"
     
@@ -53,9 +53,7 @@ class MpesaService:
                     print(f"[MpesaService] Redis set token warning: {e}")
                 return token
             except Exception as e:
-                # Self-healing fallback token for mock/sandbox runs
-                print(f"[MpesaService] Safaricom connect failed: {e}. Falling back to sandbox test token.")
-                return "mock_safaricom_sandbox_token_12345"
+                raise MpesaError(f"Safaricom connect failed: {e}")
     
     async def stk_push(self, phone_number: str, amount: Decimal, order_id: str, callback_url: str) -> str:
         """Initiate STK push to customer's phone"""
@@ -85,8 +83,7 @@ class MpesaService:
             "TransactionDesc": f"Ticket purchase {order_id[:8]}"
         }
         
-        if token == "mock_safaricom_sandbox_token_12345" or self.consumer_key == "mock_key":
-            # Autopilot mock/sandbox return for instant developer validation
+        if not self.consumer_key or not self.consumer_secret:
             checkout_id = f"ws_CO_{datetime.now().strftime('%d%m%H%M%S')}_{order_id[:4].upper()}"
             try:
                 await self.redis.setex(f"mpesa:checkout:{checkout_id}", 3600, order_id)
@@ -139,8 +136,7 @@ class MpesaService:
             "CheckoutRequestID": checkout_request_id
         }
         
-        if token == "mock_safaricom_sandbox_token_12345" or self.consumer_key == "mock_key":
-            # Status check query mock flow
+        if not self.consumer_key or not self.consumer_secret:
             return {
                 "ResponseCode": "0",
                 "ResponseDescription": "Success",

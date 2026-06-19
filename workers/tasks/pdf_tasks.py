@@ -38,7 +38,10 @@ def get_next_ticket_number(db, event_id) -> int:
 
 def generate_qr_signature(ticket_id: str, ticket_number: int) -> str:
     """HMAC-SHA256 signature to prevent ticket forgery"""
-    secret = os.environ.get("QR_SIGNING_SECRET", "otiko-shared-signing-secret-2026").encode()
+    signing_secret = os.environ.get("QR_SIGNING_SECRET")
+    if not signing_secret:
+        raise RuntimeError("QR_SIGNING_SECRET environment variable is not set")
+    secret = signing_secret.encode()
     message = f"{ticket_id}:{ticket_number}".encode()
     return hmac.new(secret, message, hashlib.sha256).hexdigest()[:32]
 
@@ -119,7 +122,7 @@ def generate_pdf_ticket(ticket, order, event, category) -> str:
         pdf_bytes = f"PDF-MOCK-BINARY:{html_content}".encode()
 
     # Upload rendered ticket document to Google Cloud Storage (GCS)
-    gcs_bucket_name = os.environ.get("GCS_TICKETS_BUCKET", "otiko-tickets-sandbox-bucket")
+    gcs_bucket_name = os.environ.get("GCS_TICKETS_BUCKET")
     
     try:
         from google.cloud import storage

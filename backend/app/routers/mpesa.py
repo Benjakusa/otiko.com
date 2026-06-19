@@ -66,8 +66,11 @@ async def initiate_stk_push(
         raise HTTPException(status_code=400, detail="Missing target M-Pesa phone number")
         
     # Standardize callback url mapping with secret callback token
-    secret_callback_token = os.environ.get("MPESA_CALLBACK_SECRET", "otiko-secret-callback-token-2026")
-    callback_url = f"{os.environ.get('MPESA_CALLBACK_BASE_URL', 'https://otiko.com')}/api/mpesa/callback/{secret_callback_token}"
+    secret_callback_token = os.environ.get("MPESA_CALLBACK_SECRET")
+    callback_base = os.environ.get("MPESA_CALLBACK_BASE_URL")
+    if not secret_callback_token or not callback_base:
+        raise HTTPException(status_code=500, detail="M-Pesa callback URL not configured")
+    callback_url = f"{callback_base}/api/mpesa/callback/{secret_callback_token}"
     
     mpesa_service = MpesaService(redis)
     try:
@@ -100,8 +103,8 @@ async def mpesa_callback(
     redis: Redis = Depends(get_redis)
 ):
     # 1. Security check: Validate callback token
-    expected_token = os.environ.get("MPESA_CALLBACK_SECRET", "otiko-secret-callback-token-2026")
-    if secret_token != expected_token:
+    expected_token = os.environ.get("MPESA_CALLBACK_SECRET")
+    if not expected_token or secret_token != expected_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid security callback token"

@@ -14,7 +14,10 @@ router = APIRouter()
 
 def generate_qr_signature(ticket_id: str, ticket_number: int) -> str:
     """Re-creates the HMAC-SHA256 signature to prevent ticket forgery"""
-    secret = os.environ.get("QR_SIGNING_SECRET", "otiko-shared-signing-secret-2026").encode()
+    signing_secret = os.environ.get("QR_SIGNING_SECRET")
+    if not signing_secret:
+        raise RuntimeError("QR_SIGNING_SECRET environment variable is not set")
+    secret = signing_secret.encode()
     message = f"{ticket_id}:{ticket_number}".encode()
     return hmac.new(secret, message, hashlib.sha256).hexdigest()[:32]
 

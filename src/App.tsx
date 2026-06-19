@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { 
   Building, Calendar, MapPin, Ticket as TicketIcon, Phone, Mail, 
   User, CheckCircle2, AlertTriangle, Loader2, RefreshCw, X, Download, QrCode,
@@ -42,22 +42,7 @@ export default function App() {
     localStorage.setItem("otiko_auth_token", token);
   }, [token]);
 
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
-  const [adminPassword, setAdminPassword] = useState("");
-  const [adminLoginError, setAdminLoginError] = useState("");
-
-  const handleAdminLogin = useCallback((e: React.FormEvent) => {
-    e.preventDefault();
-    setAdminLoginError("");
-    if (adminPassword === "otiko2025") {
-      setToken("admin-token-2026");
-      setActiveTab("admin");
-      setShowAdminLogin(false);
-      setAdminPassword("");
-    } else {
-      setAdminLoginError("Invalid admin password");
-    }
-  }, [adminPassword]);
+  // Admin login is unified with the organizer login page — role field determines redirect
 
   // Guard: redirect unauthenticated users to login when accessing restricted tabs
   const restrictedTabs = ["dashboard", "events", "wallet", "kyc", "scanner", "admin"];
@@ -106,9 +91,13 @@ export default function App() {
 
   // KYC Verification Form
   const [kycBusinessName, setKycBusinessName] = useState("");
+  const [kycKraPin, setKycKraPin] = useState("");
   const [kycDocName, setKycDocName] = useState("");
+  const [kycDocFile, setKycDocFile] = useState<File | null>(null);
   const [kycSubmitted, setKycSubmitted] = useState(false);
   const [kycLoading, setKycLoading] = useState(false);
+  const kycFileInputRef = useRef<HTMLInputElement>(null);
+  const [kycDragOver, setKycDragOver] = useState(false);
   const [walletSubTab, setWalletSubTab] = useState<"ledger" | "payouts">("ledger");
 
   // Profile Edit Form State
@@ -363,32 +352,70 @@ export default function App() {
     }
   };
 
-  // Handler: Submit KYC Details Mock state upload
+  // Handler: Submit KYC Details with document upload
   const handleKYCUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!kycBusinessName) return;
+    if (!kycBusinessName || !kycKraPin) return;
     setKycLoading(true);
 
     try {
+      const fd = new FormData();
+      fd.append("businessName", kycBusinessName);
+      fd.append("kraPin", kycKraPin);
+      if (kycDocFile) fd.append("kycDocument", kycDocFile);
+
       const res = await fetch("/api/organizers/upload-kyc", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        }
+        headers: { "Authorization": `Bearer ${token}` },
+        body: fd,
       });
       if (res.ok) {
         setKycSubmitted(true);
         showToast("KYC Application submitted successfully!", "success");
         fetchData();
       } else {
-        showToast("KYC Application submission failed", "error");
+        const err = await res.json().catch(() => ({}));
+        showToast(err.error || "KYC Application submission failed", "error");
       }
     } catch (err) {
       console.error(err);
       showToast("Error uploading KYC certificate", "error");
     } finally {
       setKycLoading(false);
+    }
+  };
+
+  const handleKycFileDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setKycDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      if (file.size > 3 * 1024 * 1024) {
+        showToast("File exceeds 3MB limit", "error");
+        return;
+      }
+      if (file.type !== "application/pdf") {
+        showToast("Only PDF files are accepted", "error");
+        return;
+      }
+      setKycDocFile(file);
+      setKycDocName(file.name);
+    }
+  };
+
+  const handleKycFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 3 * 1024 * 1024) {
+        showToast("File exceeds 3MB limit", "error");
+        return;
+      }
+      if (file.type !== "application/pdf") {
+        showToast("Only PDF files are accepted", "error");
+        return;
+      }
+      setKycDocFile(file);
+      setKycDocName(file.name);
     }
   };
 
@@ -514,7 +541,7 @@ export default function App() {
         onLoginSuccess={(organizerData, uid) => {
           setOrganizer(organizerData);
           setToken(uid);
-          setActiveTab("dashboard");
+          setActiveTab(organizerData.role === "admin" ? "admin" : "dashboard");
         }}
       />
     );
@@ -528,7 +555,7 @@ export default function App() {
         onSignupSuccess={(organizerData, idToken) => {
           setOrganizer(organizerData);
           setToken(idToken || organizerData.firebaseUid || "user-default-uid");
-          setActiveTab("dashboard");
+          setActiveTab(organizerData.role === "admin" ? "admin" : "dashboard");
         }}
       />
     );
@@ -677,13 +704,13 @@ export default function App() {
                 0722839617
               </span>
 
-              {/* Admin login link */}
+              {/* Admin login — uses unified login page with role-based redirect */}
               <button
-                onClick={() => setShowAdminLogin(true)}
+                onClick={() => setActiveTab("login")}
                 className="text-xs font-semibold text-white bg-black hover:bg-red-600 hover:text-black border border-black hover:border-red-600 px-3 py-1.5 rounded-lg transition cursor-pointer"
-                title="Admin Login"
+                title="Admin / Organizer Login"
               >
-                Admin
+                Login
               </button>
 
               {/* Profile icon to open event organizers sign-up/sign-in portal */}
@@ -2204,6 +2231,8 @@ export default function App() {
                           type="text"
                           required
                           placeholder="e.g. P05128391A"
+                          value={kycKraPin}
+                          onChange={(e) => setKycKraPin(e.target.value)}
                           className="w-full bg-slate-50 border border-slate-200 focus:bg-white rounded-lg px-3 py-2 text-xs font-mono font-bold"
                         />
                       </div>
@@ -2211,10 +2240,35 @@ export default function App() {
 
                     <div className="space-y-1.5">
                       <label className="block text-[10px] font-bold text-slate-500 uppercase">Enterprise Registration Document (PDF/Certificate image)</label>
-                      <div className="border-2 border-dashed border-slate-200 rounded-xl p-4 text-center cursor-pointer hover:border-red-500 transition bg-slate-50/50">
-                        <Layers className="h-6 w-6 text-slate-400 mx-auto mb-1 flex animate-pulse" />
-                        <span className="text-[11px] font-bold text-slate-800 block">Drag certificate here or select file</span>
-                        <span className="text-[9px] text-slate-400 block mt-0.5">Maximum file limit: 5MB</span>
+                      <div
+                        onDragOver={(e) => { e.preventDefault(); setKycDragOver(true); }}
+                        onDragLeave={() => setKycDragOver(false)}
+                        onDrop={handleKycFileDrop}
+                        onClick={() => kycFileInputRef.current?.click()}
+                        className={`border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition bg-slate-50/50 ${
+                          kycDragOver ? "border-red-500 bg-red-50" : "border-slate-200 hover:border-red-500"
+                        }`}
+                      >
+                        <input
+                          ref={kycFileInputRef}
+                          type="file"
+                          accept=".pdf"
+                          onChange={handleKycFileSelect}
+                          className="hidden"
+                        />
+                        {kycDocName ? (
+                          <>
+                            <CheckCircle2 className="h-5 w-5 text-emerald-500 mx-auto mb-1" />
+                            <span className="text-[11px] font-bold text-slate-800 block">{kycDocName}</span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5">Click to change file</span>
+                          </>
+                        ) : (
+                          <>
+                            <Layers className="h-6 w-6 text-slate-400 mx-auto mb-1 flex animate-pulse" />
+                            <span className="text-[11px] font-bold text-slate-800 block">Drag certificate here or select file</span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5">Maximum file limit: 3MB (PDF only)</span>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -2247,7 +2301,7 @@ export default function App() {
 
           {/* ==================================== TAB: ADMIN DASHBOARD ==================================== */}
           {activeTab === "admin" && (
-            <AdminDashboard token={token} />
+            <AdminDashboard token={token} organizer={organizer} onLogout={() => { setOrganizer(null); setToken(""); localStorage.removeItem("otiko_auth_token"); setActiveTab("public"); }} />
           )}
 
         </div>
@@ -2264,46 +2318,7 @@ export default function App() {
         />
       )}
 
-      {/* 4. MODAL OVERLAY: ADMIN LOGIN */}
-      {showAdminLogin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm mx-4">
-            <h2 className="text-lg font-bold text-slate-900 mb-1">Admin Login</h2>
-            <p className="text-xs text-slate-400 mb-5">Enter the admin password to access the admin dashboard.</p>
-            <form onSubmit={handleAdminLogin} className="space-y-4">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 uppercase mb-1">Password</label>
-                <input
-                  type="password"
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  placeholder="Enter admin password"
-                  autoFocus
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white rounded-lg px-3 py-2.5 text-sm"
-                />
-              </div>
-              {adminLoginError && (
-                <p className="text-xs font-medium text-red-500">{adminLoginError}</p>
-              )}
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => { setShowAdminLogin(false); setAdminPassword(""); setAdminLoginError(""); }}
-                  className="flex-1 bg-black hover:bg-red-600 hover:text-black text-white font-semibold py-2.5 rounded-lg text-sm transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 bg-black hover:bg-red-600 hover:text-black text-white font-bold py-2.5 rounded-lg text-sm transition cursor-pointer"
-                >
-                  Login
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* 4. (Removed: admin password modal — unified login handles both admin and organizer) */}
 
     </div>
   );

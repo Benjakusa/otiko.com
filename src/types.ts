@@ -12,6 +12,9 @@ export interface Organizer {
   businessName: string;
   kycStatus: 'pending' | 'verified' | 'rejected';
   mpesaPayoutNumber: string;
+  role: 'organizer' | 'admin';
+  kraPin?: string;
+  kycDocUrl?: string;
   createdAt: string;
   updatedAt: string;
 }

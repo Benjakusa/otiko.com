@@ -54,11 +54,11 @@ def send_ticket_email(self, ticket_id: str):
             pdf_content = base64.b64encode(b"%PDF-1.4 mock ticket fallback bytes").decode()
 
         # Compile transactional email
-        sg_api_key = os.environ.get("SENDGRID_API_KEY", "mock-sendgrid-api-key")
+        sg_api_key = os.environ.get("SENDGRID_API_KEY")
         
-        if Mail is not None and sg_api_key != "mock-sendgrid-api-key":
+        if Mail is not None and sg_api_key:
             message = Mail(
-                from_email="tickets@otiko.com",
+                from_email=os.environ.get("EMAIL_FROM", "noreply@otiko.com"),
                 to_emails=order.buyer_email,
                 subject=f"Your Secure Ticket for {event.name}",
                 html_content=f"""
