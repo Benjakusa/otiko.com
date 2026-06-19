@@ -4,7 +4,7 @@ import crypto from "crypto";
 import fs from "fs";
 import multer from "multer";
 import sharp from "sharp";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import nodemailer from "nodemailer";
 import { createServer as createViteServer } from "vite";
 import { initializeApp as initFirebase, cert } from "firebase-admin";
@@ -192,6 +192,7 @@ let tickets: Ticket[] = [];
 let ledgerEntries: LedgerEntry[] = [];
 let payouts: Payout[] = [];
 let payoutRequests: PayoutRequest[] = [];
+let inMemoryLocks = new Map<string, number>();
 
 let eventCodeCounter = 124;
 function generateEventCode(): string {
@@ -291,15 +292,22 @@ app.post("/api/organizers/upload-kyc", upload.single("kycDocument"), async (req,
       fs.unlink(req.file.path, () => {});
       return res.status(400).json({ error: "Only PDF files are accepted" });
     }
-    if (req.file.size > 3 * 1024 * 1024) {
+    if (req.file.size > 500 * 1024) {
       fs.unlink(req.file.path, () => {});
-      return res.status(400).json({ error: "File exceeds 3MB limit" });
+      return res.status(400).json({ error: "File exceeds 500KB limit" });
     }
-    // Compress PDF using pdf-lib
+    // Compress PDF using pdf-lib (best-effort to reduce size)
     try {
       const originalBytes = fs.readFileSync(req.file.path);
-      const pdfDoc = await PDFDocument.load(originalBytes, { ignoreEncryption: true });
-      const compressedBytes = await pdfDoc.save({ useObjectStreams: true });
+      let pdfDoc = await PDFDocument.load(originalBytes, { ignoreEncryption: true });
+      let compressedBytes = await pdfDoc.save({ useObjectStreams: true });
+      // If still too large, try stripping metadata by copying pages to a fresh document
+      if (compressedBytes.length > 500 * 1024) {
+        const freshDoc = await PDFDocument.create();
+        const copied = await freshDoc.copyPages(pdfDoc, pdfDoc.getPageIndices());
+        copied.forEach(p => freshDoc.addPage(p));
+        compressedBytes = await freshDoc.save({ useObjectStreams: true });
+      }
       if (compressedBytes.length < originalBytes.length) {
         fs.writeFileSync(req.file.path, compressedBytes);
       }
@@ -768,17 +776,39 @@ app.get("/api/wallet/payout-requests", async (req, res) => {
   res.json(payoutRequests.filter(pr => pr.organizerId === org.id));
 });
 
+function validateKenyanPhone(phone: string): boolean {
+  return /^(254|0)?[17]\d{8}$/.test(phone.replace(/\s+/g, ""));
+}
+
 app.post("/api/wallet/payout-request", async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
+  if (org.kycStatus !== "verified") {
+    return res.status(403).json({ error: "Payout not allowed: Organizer is not verified" });
+  }
 
-  const { amount, paymentMethod, accountDetails, notes } = req.body;
+  const { amount, paymentMethod, notes } = req.body;
   const withdrawAmount = Number(amount);
   if (isNaN(withdrawAmount) || withdrawAmount <= 100) {
     return res.status(400).json({ error: "Minimum payout threshold is KES 100" });
   }
-  if (!paymentMethod || !accountDetails) {
-    return res.status(400).json({ error: "Payment method and account details are required" });
+  if (!paymentMethod || !["mpesa", "bank"].includes(paymentMethod)) {
+    return res.status(400).json({ error: "Payment method must be 'mpesa' or 'bank'" });
+  }
+
+  let accountDetails = "";
+  if (paymentMethod === "mpesa") {
+    const phoneNumber = req.body.phoneNumber || "";
+    if (!validateKenyanPhone(phoneNumber)) {
+      return res.status(400).json({ error: "Valid Kenyan M-Pesa phone number required (e.g. 254712345678)" });
+    }
+    accountDetails = JSON.stringify({ phoneNumber });
+  } else if (paymentMethod === "bank") {
+    const { bankAccountHolder, bankAccountNumber, bankName, bankBranchName } = req.body;
+    if (!bankAccountHolder || !bankAccountNumber || !bankName || !bankBranchName) {
+      return res.status(400).json({ error: "All bank transfer fields are required: account holder, account number, bank name, and branch name" });
+    }
+    accountDetails = JSON.stringify({ bankAccountHolder, bankAccountNumber, bankName, bankBranchName });
   }
 
   const wallet = calculateWallet(org.id);
@@ -839,6 +869,126 @@ app.delete("/api/admin/organizers/:id", async (req, res) => {
   res.json({ success: true });
 });
 
+// --- ORGANIZER DELETE ACCOUNT SELF-SERVICE ---
+app.post("/api/organizers/delete-account", async (req, res) => {
+  const org = await getOrganizerByToken(req);
+  if (!org) return res.status(401).json({ error: "Unauthorized" });
+
+  // Check if the organizer has any paid orders (sold tickets)
+  const soldTickets = tickets.filter(t => {
+    const order = orders.find(o => o.id === t.orderId && o.status === "paid");
+    const event = events.find(e => e.id === t.eventId && e.organizerId === org.id);
+    return order && event;
+  });
+
+  const hasSales = soldTickets.length > 0;
+  const organizerEvents = events.filter(e => e.organizerId === org.id);
+  const hasActiveEvents = organizerEvents.some(e => e.status === "active");
+
+  if (hasSales) {
+    // Deactivation path: tickets exist, must keep records
+    const now = new Date().toISOString();
+
+    // Cancel all active events (hide from public)
+    for (const evt of organizerEvents) {
+      if (evt.status === "active" || evt.status === "draft") {
+        evt.status = "cancelled";
+        await syncUpdate("events", evt.id, { status: "cancelled" });
+      }
+    }
+
+    // Anonymize organizer profile so it's no longer accessible
+    org.email = `deleted-${org.id}@otiko.local`;
+    org.phone = "";
+    org.businessName = "Deactivated Account";
+    org.name = "Deactivated Account";
+    org.kycStatus = "rejected";
+    org.updatedAt = now;
+    await syncUpdate("organizers", org.id, {
+      email: org.email, phone: org.phone, businessName: org.businessName,
+      name: org.name, kycStatus: org.kycStatus, updatedAt: now,
+    });
+
+    await addAuditLog("account_deactivated", "organizer", org.id, org.id, "organizer",
+      `Account deactivated (tickets sold): ${organizerEvents.length} events cancelled, ${soldTickets.length} ticket records retained`);
+
+    // Clear auth token by removing firebaseUid mapping (prevents login)
+    org.firebaseUid = `deactivated-${org.id}`;
+    await syncUpdate("organizers", org.id, { firebaseUid: org.firebaseUid });
+
+    return res.json({ deactivated: true, reason: "tickets_exist", message: "Account deactivated. Your events have been cancelled. Ticket records are retained for customer reference." });
+  }
+
+  // Full deletion path: no tickets sold
+  const orgId = org.id;
+
+  // Delete all organizer events
+  for (const evt of organizerEvents) {
+    const evtIdx = events.findIndex(e => e.id === evt.id);
+    if (evtIdx !== -1) events.splice(evtIdx, 1);
+    await syncDelete("events", evt.id);
+  }
+
+  // Delete all tickets belonging to this organizer's events
+  const eventIds = new Set(organizerEvents.map(e => e.id));
+  for (let i = tickets.length - 1; i >= 0; i--) {
+    if (eventIds.has(tickets[i].eventId)) {
+      const removed = tickets.splice(i, 1)[0];
+      await syncDelete("tickets", removed.id);
+    }
+  }
+
+  // Delete all orders for this organizer's events
+  for (let i = orders.length - 1; i >= 0; i--) {
+    if (eventIds.has(orders[i].eventId)) {
+      const removed = orders.splice(i, 1)[0];
+      await syncDelete("orders", removed.id);
+    }
+  }
+
+  // Delete payout requests
+  for (let i = payoutRequests.length - 1; i >= 0; i--) {
+    if (payoutRequests[i].organizerId === orgId) {
+      const removed = payoutRequests.splice(i, 1)[0];
+      await syncDelete("payout_requests", removed.id);
+    }
+  }
+
+  // Delete ledger entries
+  for (let i = ledgerEntries.length - 1; i >= 0; i--) {
+    if (ledgerEntries[i].organizerId === orgId) {
+      const removed = ledgerEntries.splice(i, 1)[0];
+      await syncDelete("ledgerEntries", removed.id);
+    }
+  }
+
+  // Delete the organizer
+  const orgIdx = organizers.findIndex(o => o.id === orgId);
+  if (orgIdx !== -1) {
+    organizers.splice(orgIdx, 1);
+    await syncDelete("organizers", orgId);
+  }
+
+  // Clean up uploaded images
+  for (const evt of organizerEvents) {
+    if (evt.flyerUrl && evt.flyerUrl.startsWith("/uploads/")) {
+      const filePath = path.join(process.cwd(), evt.flyerUrl);
+      try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+    }
+  }
+
+  // Clean up KYC documents
+  if (org.kycDocUrl && org.kycDocUrl.startsWith("/uploads/")) {
+    const filePath = path.join(process.cwd(), org.kycDocUrl);
+    try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+  }
+
+  await addAuditLog("account_deleted", "organizer", orgId, orgId, "organizer",
+    `Account permanently deleted: ${organizerEvents.length} events, ${hasActiveEvents ? "had active events" : "no active events"}`);
+
+  res.json({ deleted: true, message: "Account permanently deleted." });
+});
+
 // --- ADMIN: EVENT MANAGEMENT ---
 app.get("/api/admin/events", async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
@@ -896,7 +1046,28 @@ app.get("/api/admin/payout-requests", async (req, res) => {
   const { status } = req.query;
   let filtered = [...payoutRequests];
   if (status && typeof status === "string") filtered = filtered.filter(pr => pr.status === status);
-  res.json(filtered.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime()));
+  // Attach organizer KYC status to each request
+  const enriched = filtered.map(pr => {
+    const org = organizers.find(o => o.id === pr.organizerId);
+    return { ...pr, organizerKycStatus: org?.kycStatus || "unknown" };
+  });
+  // Compute platform-level balance
+  const allLedgers = ledgerEntries.filter(l => l.entryType === "sale");
+  const grossCollected = allLedgers.reduce((s, item) => s + item.grossAmount, 0);
+  const platformFees = allLedgers.reduce((s, item) => s + item.platformFee, 0);
+  const netBalance = grossCollected - platformFees;
+  const processedPayoutsSum = payouts
+    .filter(p => ["completed", "approved", "processing"].includes(p.status))
+    .reduce((sum, item) => sum + item.amount, 0);
+  const reservedAmount = payoutRequests
+    .filter(pr => pr.status === "pending" || pr.status === "approved")
+    .reduce((sum, item) => sum + item.amount, 0);
+  const availableBalance = Math.max(0, netBalance - processedPayoutsSum - reservedAmount);
+
+  res.json({
+    requests: enriched.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime()),
+    platformBalance: { grossCollected, platformFees, netBalance, processedPayoutsSum, reservedAmount, availableBalance }
+  });
 });
 
 app.post("/api/admin/payout-requests/:id/approve", async (req, res) => {
@@ -905,13 +1076,26 @@ app.post("/api/admin/payout-requests/:id/approve", async (req, res) => {
   if (!pr) return res.status(404).json({ error: "Payout request not found" });
   if (pr.status !== "pending") return res.status(400).json({ error: `Request is already ${pr.status}` });
 
+  // KYC check
+  const org = organizers.find(o => o.id === pr.organizerId);
+  if (!org || org.kycStatus !== "verified") {
+    await addAuditLog("PAYOUT_BLOCKED_UNVERIFIED_ACCOUNT", "payout_request", pr.id, "admin", "admin",
+      `Blocked: Organizer ${pr.organizerName} (${pr.organizerId}) is not verified. Amount: KES ${pr.amount}`);
+    return res.status(403).json({ error: "Payout not allowed: Organizer is not verified" });
+  }
+
+  // Balance re-check
+  const wallet = calculateWallet(pr.organizerId);
+  if (pr.amount > wallet.availableBalance) {
+    return res.status(400).json({ error: "Insufficient platform balance to approve this payout" });
+  }
+
   pr.status = "approved";
   pr.approvedAt = new Date().toISOString();
   pr.approvedBy = "admin";
   await syncUpdate("payoutRequests", pr.id, { status: "approved", approvedAt: pr.approvedAt, approvedBy: pr.approvedBy });
-  await addAuditLog("payout_request_approved", "payout_request", pr.id, "admin", "admin", `Approved KES ${pr.amount}`);
+  await addAuditLog("payout_request_approved", "payout_request", pr.id, "admin", "admin", `Approved KES ${pr.amount} for ${pr.organizerName}`);
 
-  const org = organizers.find(o => o.id === pr.organizerId);
   if (org) sendEmail(org.email, "Payout Request Approved",
     `<p>Your payout request <strong>${pr.id}</strong> has been approved.</p><p>Amount: KES ${pr.amount}</p><p>Approval Date: ${pr.approvedAt}</p><p>Your payment will be processed shortly.</p>`);
 
@@ -938,40 +1122,267 @@ app.post("/api/admin/payout-requests/:id/reject", async (req, res) => {
 });
 
 app.post("/api/admin/payout-requests/:id/process", async (req, res) => {
-  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  const adminOrg = await getOrganizerByToken(req);
+  if (!adminOrg || adminOrg.role !== "admin") return res.status(401).json({ error: "Unauthorized" });
   const pr = payoutRequests.find(p => p.id === req.params.id);
   if (!pr) return res.status(404).json({ error: "Payout request not found" });
   if (pr.status !== "approved") return res.status(400).json({ error: "Request must be approved before processing" });
 
-  pr.status = "processed";
-  pr.processedAt = new Date().toISOString();
-  await syncUpdate("payoutRequests", pr.id, { status: "processed", processedAt: pr.processedAt });
+  // Confirmation code required
+  const { confirmationCode } = req.body;
+  if (!confirmationCode || typeof confirmationCode !== "string" || confirmationCode.trim().length < 3) {
+    return res.status(400).json({ error: "A valid payment confirmation code (min 3 characters) is required" });
+  }
 
-  // Create actual payout record
-  const newPayout: Payout = {
-    id: `pay-${docId()}`, organizerId: pr.organizerId, amount: pr.amount,
-    status: "completed", mpesaTransactionId: `TXN${crypto.randomBytes(4).toString("hex").toUpperCase()}`,
-    requestedAt: pr.requestedAt, processedAt: pr.processedAt
-  };
-  payouts.push(newPayout);
-  await syncSet("payouts", newPayout.id, newPayout);
-
-  // Create ledger entry
-  const entry: LedgerEntry = {
-    id: `led-${docId()}`, organizerId: pr.organizerId, orderId: "", eventId: "",
-    grossAmount: -pr.amount, platformFee: 0, netAmount: -pr.amount,
-    entryType: "payout", createdAt: new Date().toISOString()
-  };
-  ledgerEntries.push(entry);
-  await syncSet("ledgerEntries", entry.id, entry);
-
-  await addAuditLog("payout_request_processed", "payout_request", pr.id, "admin", "admin", `Processed KES ${pr.amount}`);
-
+  // KYC check (defensive — should have passed at approval)
   const org = organizers.find(o => o.id === pr.organizerId);
-  if (org) sendEmail(org.email, "Payout Successfully Processed",
-    `<p>Your payout request <strong>${pr.id}</strong> has been processed.</p><p>Amount Paid: KES ${pr.amount}</p><p>Processing Date: ${pr.processedAt}</p><p>Transaction: ${newPayout.mpesaTransactionId}</p>`);
+  if (!org || org.kycStatus !== "verified") {
+    await addAuditLog("PAYOUT_BLOCKED_UNVERIFIED_ACCOUNT", "payout_request", pr.id, adminOrg.id, "admin",
+      `Blocked at process: Organizer ${pr.organizerName} (${pr.organizerId}) not verified. Amount: KES ${pr.amount}`);
+    return res.status(403).json({ error: "Payout not allowed: Organizer is not verified" });
+  }
 
-  res.json(pr);
+  // Balance re-check
+  const wallet = calculateWallet(pr.organizerId);
+  if (pr.amount > wallet.availableBalance) {
+    return res.status(400).json({ error: "Insufficient platform balance to process this payout" });
+  }
+
+  // Lock: prevent double processing
+  const lockKey = `payout-lock-${pr.id}`;
+  if ((inMemoryLocks?.has(lockKey))) {
+    return res.status(409).json({ error: "This payout is being processed by another admin" });
+  }
+  if (!inMemoryLocks) inMemoryLocks = new Map();
+  inMemoryLocks.set(lockKey, Date.now());
+
+  try {
+    pr.status = "processed";
+    pr.processedAt = new Date().toISOString();
+    pr.processedBy = adminOrg.id;
+    pr.processedByName = adminOrg.name;
+    pr.confirmationCode = confirmationCode.trim();
+    await syncUpdate("payoutRequests", pr.id, {
+      status: "processed", processedAt: pr.processedAt,
+      processedBy: pr.processedBy, processedByName: pr.processedByName,
+      confirmationCode: pr.confirmationCode
+    });
+
+    // Create actual payout record with full metadata
+    const newPayout: Payout = {
+      id: `pay-${docId()}`, organizerId: pr.organizerId, amount: pr.amount,
+      status: "completed", mpesaTransactionId: `TXN${crypto.randomBytes(4).toString("hex").toUpperCase()}`,
+      requestedAt: pr.requestedAt, processedAt: pr.processedAt,
+      payoutRequestId: pr.id, processedBy: pr.processedBy,
+      processedByName: pr.processedByName, confirmationCode: pr.confirmationCode,
+      paymentMethod: pr.paymentMethod,
+      recipientName: pr.organizerName, recipientId: pr.organizerId
+    };
+    payouts.push(newPayout);
+    await syncSet("payouts", newPayout.id, newPayout);
+
+    // Create ledger entry
+    const entry: LedgerEntry = {
+      id: `led-${docId()}`, organizerId: pr.organizerId, orderId: "", eventId: "",
+      grossAmount: -pr.amount, platformFee: 0, netAmount: -pr.amount,
+      entryType: "payout", createdAt: new Date().toISOString()
+    };
+    ledgerEntries.push(entry);
+    await syncSet("ledgerEntries", entry.id, entry);
+
+    await addAuditLog("payout_request_processed", "payout_request", pr.id, adminOrg.id, "admin",
+      `Processed KES ${pr.amount} for ${pr.organizerName} via ${pr.paymentMethod}. Code: ${pr.confirmationCode}. Admin: ${adminOrg.name}`);
+
+    if (org) sendEmail(org.email, "Payout Successfully Processed",
+      `<p>Your payout request <strong>${pr.id}</strong> has been processed.</p>
+       <p>Amount Paid: KES ${pr.amount}</p>
+       <p>Processing Date: ${pr.processedAt}</p>
+       <p>Processed By: ${adminOrg.name}</p>
+       <p>Transaction: ${newPayout.mpesaTransactionId}</p>
+       <p>Confirmation Code: ${pr.confirmationCode}</p>`);
+
+    res.json(pr);
+  } finally {
+    inMemoryLocks.delete(lockKey);
+  }
+});
+
+// --- PAYOUT RECEIPT PDF ---
+app.get("/api/admin/payout-receipt/:id", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+  const payout = payouts.find(p => p.payoutRequestId === req.params.id || p.id === req.params.id);
+  const pr = payoutRequests.find(p => p.id === (payout?.payoutRequestId || req.params.id));
+  if (!pr && !payout) return res.status(404).json({ error: "Payout not found" });
+
+  const receipt = pr || payout;
+  const org = organizers.find(o => o.id === (pr?.organizerId || payout?.organizerId));
+
+  try {
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([595.28, 841.89]); // A4
+    const { width, height } = page.getSize();
+
+    // Font setup
+    const helvetica = await pdfDoc.embedStandardFont(StandardFonts.Helvetica);
+    const helveticaBold = await pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+
+    let y = height - 50;
+
+    // Header
+    page.drawText("PAYMENT RECEIPT", { x: 50, y, size: 22, font: helveticaBold });
+    y -= 30;
+    page.drawText("Otiko Payment Platform", { x: 50, y, size: 11, font: helvetica });
+    y -= 45;
+
+    // Horizontal line
+    page.drawLine({ start: { x: 50, y }, end: { x: width - 50, y }, thickness: 1 });
+    y -= 25;
+
+    const drawField = (label: string, value: string) => {
+      page.drawText(label, { x: 50, y, size: 9, font: helveticaBold, color: rgb(0.4, 0.4, 0.4) });
+      page.drawText(value || "-", { x: 200, y, size: 10, font: helvetica });
+      y -= 18;
+    };
+
+    drawField("Receipt ID", pr?.id || payout?.id || "-");
+    drawField("Date Processed", pr?.processedAt || payout?.processedAt || "-");
+    drawField("Organizer", pr?.organizerName || org?.name || "-");
+    drawField("Organizer ID", pr?.organizerId || payout?.organizerId || "-");
+    drawField("Amount", `KES ${(pr?.amount || payout?.amount || 0).toLocaleString()}`);
+    drawField("Payment Method", pr?.paymentMethod || payout?.paymentMethod || "-");
+    drawField("Transaction ID", payout?.mpesaTransactionId || "-");
+    drawField("Processed By", pr?.processedByName || payout?.processedByName || "admin");
+    drawField("Confirmation Code", pr?.confirmationCode || payout?.confirmationCode || "-");
+    drawField("Status", "Completed");
+
+    // Account details
+    if (pr && pr.accountDetails) {
+      y -= 10;
+      page.drawLine({ start: { x: 50, y }, end: { x: width - 50, y }, thickness: 0.5 });
+      y -= 20;
+      page.drawText("Payment Destination", { x: 50, y, size: 11, font: helveticaBold });
+      y -= 20;
+      try {
+        const details = JSON.parse(pr.accountDetails);
+        if (pr.paymentMethod === "mpesa") {
+          drawField("Phone", details.phoneNumber || "-");
+        } else {
+          drawField("Account Holder", details.bankAccountHolder || "-");
+          drawField("Account Number", details.bankAccountNumber || "-");
+          drawField("Bank Name", details.bankName || "-");
+          drawField("Branch", details.bankBranchName || "-");
+        }
+      } catch { /* fallback */ }
+    }
+
+    // Footer
+    y = 60;
+    page.drawLine({ start: { x: 50, y }, end: { x: width - 50, y }, thickness: 0.5 });
+    y -= 20;
+    page.drawText("This is a computer-generated receipt.", { x: 50, y, size: 8, font: helvetica, color: rgb(0.6, 0.6, 0.6) });
+    y -= 12;
+    page.drawText(`Generated: ${new Date().toISOString()}`, { x: 50, y, size: 8, font: helvetica, color: rgb(0.6, 0.6, 0.6) });
+
+    const pdfBytes = await pdfDoc.save();
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="receipt-${pr?.id || payout?.id}.pdf"`);
+    res.send(Buffer.from(pdfBytes));
+  } catch (err) {
+    res.status(500).json({ error: "Failed to generate receipt PDF" });
+  }
+});
+
+// Organizer self-service receipt
+app.get("/api/organizers/payout-receipt/:id", async (req, res) => {
+  const org = await getOrganizerByToken(req);
+  if (!org) return res.status(401).json({ error: "Unauthorized" });
+  // Use the same receipt generator by proxying to admin path logic
+  const payout = payouts.find(p => (p.payoutRequestId === req.params.id || p.id === req.params.id) && p.organizerId === org.id);
+  const pr = payoutRequests.find(p => p.id === (payout?.payoutRequestId || req.params.id) && p.organizerId === org.id);
+  if (!pr && !payout) return res.status(404).json({ error: "Payout not found" });
+  const receipt = pr || payout;
+
+  try {
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([595.28, 841.89]);
+    const { width, height } = page.getSize();
+    const helvetica = await pdfDoc.embedStandardFont(StandardFonts.Helvetica);
+    const helveticaBold = await pdfDoc.embedStandardFont(StandardFonts.HelveticaBold);
+
+    let y = height - 50;
+    page.drawText("PAYMENT PROOF", { x: 50, y, size: 22, font: helveticaBold });
+    y -= 30;
+    page.drawText("Otiko Payment Platform", { x: 50, y, size: 11, font: helvetica });
+    y -= 45;
+    page.drawLine({ start: { x: 50, y }, end: { x: width - 50, y }, thickness: 1 });
+    y -= 25;
+
+    const drawField = (label: string, value: string) => {
+      page.drawText(label, { x: 50, y, size: 9, font: helveticaBold, color: rgb(0.4, 0.4, 0.4) });
+      page.drawText(value || "-", { x: 200, y, size: 10, font: helvetica });
+      y -= 18;
+    };
+
+    drawField("Payout ID", pr?.id || payout?.id || "-");
+    drawField("Amount", `KES ${(pr?.amount || payout?.amount || 0).toLocaleString()}`);
+    drawField("Status", "Completed");
+    drawField("Date Processed", pr?.processedAt || payout?.processedAt || "-");
+    drawField("Payment Method", pr?.paymentMethod || payout?.paymentMethod || "-");
+    drawField("Transaction ID", payout?.mpesaTransactionId || "-");
+
+    if (pr?.accountDetails) {
+      y -= 10;
+      page.drawLine({ start: { x: 50, y }, end: { x: width - 50, y }, thickness: 0.5 });
+      y -= 20;
+      page.drawText("Payment Method Details", { x: 50, y, size: 11, font: helveticaBold });
+      y -= 20;
+      try {
+        const details = JSON.parse(pr.accountDetails);
+        if (pr.paymentMethod === "mpesa") {
+          drawField("Phone", details.phoneNumber || "-");
+        } else {
+          drawField("Account Holder", details.bankAccountHolder || "-");
+          drawField("Account Number", details.bankAccountNumber || "-");
+          drawField("Bank Name", details.bankName || "-");
+          drawField("Branch", details.bankBranchName || "-");
+        }
+      } catch { /* */ }
+    }
+
+    y = 60;
+    page.drawLine({ start: { x: 50, y }, end: { x: width - 50, y }, thickness: 0.5 });
+    y -= 20;
+    page.drawText("This is a computer-generated payment proof document.", { x: 50, y, size: 8, font: helvetica, color: rgb(0.6, 0.6, 0.6) });
+    y -= 12;
+    page.drawText(`Generated: ${new Date().toISOString()}`, { x: 50, y, size: 8, font: helvetica, color: rgb(0.6, 0.6, 0.6) });
+
+    const pdfBytes = await pdfDoc.save();
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="payment-proof-${pr?.id || payout?.id}.pdf"`);
+    res.send(Buffer.from(pdfBytes));
+  } catch {
+    res.status(500).json({ error: "Failed to generate payment proof" });
+  }
+});
+
+// --- ADMIN PAYOUT HISTORY (filtered, for CSV/export) ---
+app.get("/api/admin/payouts", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+
+  let result = [...payouts];
+  const { organizerId, dateFrom, dateTo, status } = req.query;
+  if (organizerId && typeof organizerId === "string") result = result.filter(p => p.organizerId === organizerId);
+  if (dateFrom && typeof dateFrom === "string") result = result.filter(p => p.processedAt && p.processedAt >= dateFrom);
+  if (dateTo && typeof dateTo === "string") result = result.filter(p => p.processedAt && p.processedAt <= dateTo);
+  if (status && typeof status === "string") result = result.filter(p => p.status === status);
+
+  // Enrich with organizer names
+  const enriched = result.map(p => {
+    const org = organizers.find(o => o.id === p.organizerId);
+    return { ...p, organizerName: org?.name || "Unknown" };
+  });
+
+  res.json(enriched.sort((a, b) => new Date(b.processedAt || b.requestedAt).getTime() - new Date(a.processedAt || a.requestedAt).getTime()));
 });
 
 // ==================== VITE MIDDLEWARE ====================

@@ -28,10 +28,8 @@ export default function PolicyPages({
             <span>Back to Home</span>
           </button>
 
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-extrabold text-slate-900 tracking-tight">
-              Otiko<span className="text-red-500">.com</span>
-            </span>
+          <div className="flex items-center">
+            <img src="/assets/otikologo.png" alt="Otiko" className="h-6 w-auto" />
           </div>
         </div>
       </header>
@@ -454,12 +452,12 @@ export default function PolicyPages({
                       Cookie Policy
                     </h1>
                     <p className="text-xs text-slate-500 font-semibold font-mono mt-2">
-                      Last updated: June 13, 2026
+                      Last updated: June 19, 2026
                     </p>
                   </header>
 
                   <p className="text-sm text-slate-600 leading-relaxed">
-                    This Cookie Policy explains how Otiko Technologies ("Otiko", "we", "us") uses cookies and similar tracking technologies on Otiko.com ("the Platform").
+                    This Cookie Policy explains how Otiko Technologies ("Otiko", "we", "us") uses cookies and similar storage technologies on Otiko.com ("the Platform").
                   </p>
 
                   <section className="space-y-4">
@@ -467,33 +465,59 @@ export default function PolicyPages({
                       1. What Are Cookies
                     </h2>
                     <p className="text-sm text-slate-600 leading-relaxed">
-                      Cookies are small text files stored on your device when you visit a website. They help the website function properly, remember your preferences, and understand how visitors use the site.
+                      Cookies are small text files stored on your device when you visit a website. They help the website function properly, remember your preferences, and understand how visitors use the site. On Otiko, we also use browser local storage for similar purposes.
                     </p>
                   </section>
 
                   <section className="space-y-4">
                     <h2 className="text-lg font-bold text-slate-950">
-                      2. Types of Cookies We Use
+                      2. Your Consent
+                    </h2>
+                    <p className="text-sm text-slate-600 leading-relaxed">
+                      When you first visit the Platform, a cookie consent banner appears asking you to choose which categories of cookies to allow. Your choice is stored in your browser under the key <code className="bg-slate-100 px-1 rounded text-xs font-mono">otiko_cookie_consent</code>. You can change your preference at any time by clicking "Cookie Preferences" in the website footer. No non-essential storage is used until you explicitly grant consent.
+                    </p>
+                  </section>
+
+                  <section className="space-y-4">
+                    <h2 className="text-lg font-bold text-slate-950">
+                      3. Types of Cookies We Use
                     </h2>
                     <div className="space-y-3">
                       <div className="border-l-2 border-slate-900 pl-4 py-1">
                         <h4 className="text-sm font-bold text-slate-900">Essential Cookies</h4>
                         <p className="text-xs text-slate-600 leading-relaxed mt-1">
-                          Required for the Platform to function — for example, maintaining your login session, remembering items in your checkout flow, and ensuring security features work correctly. These cannot be disabled without affecting core functionality.
+                          Required for the Platform to function. The following is stored in your browser's local storage:
                         </p>
-                      </div>
-
-                      <div className="border-l-2 border-slate-900 pl-4 py-1">
-                        <h4 className="text-sm font-bold text-slate-900">Performance & Analytics Cookies</h4>
+                        <ul className="list-disc pl-5 mt-1.5 space-y-0.5 text-xs text-slate-600">
+                          <li><code className="bg-slate-100 px-1 rounded text-xs font-mono">otiko_auth_token</code> — maintains your authenticated session so you do not need to log in again on each visit.</li>
+                        </ul>
                         <p className="text-xs text-slate-600 leading-relaxed mt-1">
-                          Help us understand how visitors interact with the Platform (e.g., pages visited, time spent, errors encountered) so we can improve performance and user experience. This data is generally aggregated and anonymized.
+                          These cannot be disabled without affecting core functionality. They do not track your activity across third-party sites.
                         </p>
                       </div>
 
                       <div className="border-l-2 border-slate-900 pl-4 py-1">
                         <h4 className="text-sm font-bold text-slate-900">Functional Cookies</h4>
                         <p className="text-xs text-slate-600 leading-relaxed mt-1">
-                          Remember your preferences (e.g., search filters, display settings) to enhance your experience on return visits.
+                          When enabled, these store lightweight user interface preferences in your browser's local storage (prefix <code className="bg-slate-100 px-1 rounded text-xs font-mono">otiko_pref_</code>) to avoid redundant recomputation and reduce UI flicker on return visits:
+                        </p>
+                        <ul className="list-disc pl-5 mt-1.5 space-y-0.5 text-xs text-slate-600">
+                          <li>Sidebar collapsed/expanded state</li>
+                          <li>Last selected dashboard view tab</li>
+                          <li>Display theme preference (light/dark)</li>
+                          <li>Language / locale selection</li>
+                          <li>Results-per-page setting on list views</li>
+                          <li>Last active filter on event or inventory listings</li>
+                        </ul>
+                        <p className="text-xs text-slate-600 leading-relaxed mt-1">
+                          These preferences are not sent to our servers. They are disabled by default until you grant consent. If you revoke consent, all functional preferences are immediately cleared from your browser.
+                        </p>
+                      </div>
+
+                      <div className="border-l-2 border-slate-900 pl-4 py-1">
+                        <h4 className="text-sm font-bold text-slate-900">Analytics Cookies</h4>
+                        <p className="text-xs text-slate-600 leading-relaxed mt-1">
+                          This category is reserved for future use. No analytics tooling (such as Google Analytics) is currently active on the Platform. If we add analytics cookies in the future, we will update this policy and ask for your consent before they are activated.
                         </p>
                       </div>
                     </div>
@@ -501,40 +525,32 @@ export default function PolicyPages({
 
                   <section className="space-y-4">
                     <h2 className="text-lg font-bold text-slate-950">
-                      3. Third-Party Cookies
+                      4. Third-Party Cookies
                     </h2>
                     <p className="text-sm text-slate-600 leading-relaxed">
-                      We may use third-party services that set their own cookies, including:
-                    </p>
-                    <ul className="list-disc pl-5 space-y-1 text-sm text-slate-650">
-                      <li>Analytics providers (e.g., Google Analytics) to understand site usage</li>
-                      <li>Payment processing partners (M-Pesa Daraja API) during checkout</li>
-                    </ul>
-                    <p className="text-sm text-slate-600 leading-relaxed">
-                      These third parties have their own privacy and cookie policies, which we encourage you to review.
+                      The Platform does not currently use any third-party cookies or tracking scripts. Payment processing via M-Pesa Daraja API occurs entirely server-side and does not set cookies on your device. If third-party services are introduced in the future, this policy will be updated and your consent will be requested where required.
                     </p>
                   </section>
 
                   <section className="space-y-4">
                     <h2 className="text-lg font-bold text-slate-950">
-                      4. Managing Cookies
+                      5. Managing Cookies
                     </h2>
                     <p className="text-sm text-slate-600 leading-relaxed">
-                      You can control or disable cookies through your browser settings. Most browsers allow you to:
+                      You can control your cookie preferences in two ways:
                     </p>
                     <ul className="list-disc pl-5 space-y-1.5 text-sm text-slate-650">
-                      <li>View what cookies are stored and delete them individually</li>
-                      <li>Block third-party cookies</li>
-                      <li>Block all cookies from specific or all websites</li>
+                      <li><strong>Via the Cookie Preferences link</strong> in the website footer — this reopens the consent banner and lets you change your choices at any time.</li>
+                      <li><strong>Via your browser settings</strong> — most browsers allow you to view stored cookies, delete them individually, block third-party cookies, or block all cookies.</li>
                     </ul>
-                    <p className="text-sm text-slate-600 italic leading-relaxed pt-1 font-medium">
+                    <p className="text-xs text-slate-600 italic leading-relaxed pt-1 font-medium">
                       Please note that disabling essential cookies may affect the functionality of the Platform, including your ability to log in, complete purchases, or access your dashboard.
                     </p>
                   </section>
 
                   <section className="space-y-4">
                     <h2 className="text-lg font-bold text-slate-950">
-                      5. Changes to This Policy
+                      6. Changes to This Policy
                     </h2>
                     <p className="text-sm text-slate-600 leading-relaxed">
                       We may update this Cookie Policy from time to time to reflect changes in technology, legislation, or our practices. Updates will be posted on this page with a revised "Last updated" date.
@@ -543,7 +559,7 @@ export default function PolicyPages({
 
                   <section className="space-y-4">
                     <h2 className="text-lg font-bold text-slate-950">
-                      6. Contact Us
+                      7. Contact Us
                     </h2>
                     <div className="bg-slate-50 border border-slate-205/65 p-4 rounded-xl text-xs font-mono space-y-1">
                       <p className="font-bold text-slate-900">For questions about our use of cookies:</p>

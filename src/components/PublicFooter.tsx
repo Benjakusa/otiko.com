@@ -5,9 +5,10 @@ interface PublicFooterProps {
   onOrganizerClick: () => void;
   onBrowseEventsClick?: () => void;
   onPolicyClick?: (section: "refund" | "privacy" | "cookies" | "terms") => void;
+  onCookiePreferencesClick?: () => void;
 }
 
-export default function PublicFooter({ onOrganizerClick, onBrowseEventsClick, onPolicyClick }: PublicFooterProps) {
+export default function PublicFooter({ onOrganizerClick, onBrowseEventsClick, onPolicyClick, onCookiePreferencesClick }: PublicFooterProps) {
   const currentYear = new Date().getFullYear();
   const [activeModal, setActiveModal] = useState<"refund" | "privacy" | "terms" | "how-it-works" | null>(null);
 
@@ -33,13 +34,8 @@ export default function PublicFooter({ onOrganizerClick, onBrowseEventsClick, on
           
           {/* COLUMN 1: BRAND SECTION */}
           <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 bg-[#0F172A] rounded-lg flex items-center justify-center font-bold text-white text-base shadow-sm">
-                O
-              </div>
-              <span className="text-sm font-extrabold text-slate-900 tracking-tight">
-                Otiko<span className="text-red-500">.com</span>
-              </span>
+            <div className="flex items-center">
+              <img src="/assets/otikologo.png" alt="Otiko" className="h-5 w-auto" />
             </div>
             
             <p className="text-xs text-slate-500 leading-relaxed">
@@ -129,6 +125,14 @@ export default function PublicFooter({ onOrganizerClick, onBrowseEventsClick, on
                   Terms & Conditions
                 </button>
               </li>
+              <li>
+                <button
+                  onClick={() => onCookiePreferencesClick?.()}
+                  className="text-slate-550 hover:text-red-650 transition-colors duration-150 font-medium text-left cursor-pointer"
+                >
+                  Cookie Preferences
+                </button>
+              </li>
             </ul>
           </div>
 
@@ -154,7 +158,7 @@ export default function PublicFooter({ onOrganizerClick, onBrowseEventsClick, on
                 href="https://facebook.com"
                 target="_blank"
                 referrerPolicy="no-referrer"
-                className="p-1.5 bg-white border border-slate-200/60 hover:bg-slate-100 text-slate-450 hover:text-slate-900 rounded-lg transition-colors duration-150"
+                className="p-1.5 bg-white border border-slate-200/60 hover:bg-slate-100 text-slate-450 hover:text-red-650 rounded-lg transition-colors duration-150"
                 aria-label="Facebook"
               >
                 <Facebook className="h-3.5 w-3.5" />
@@ -163,7 +167,7 @@ export default function PublicFooter({ onOrganizerClick, onBrowseEventsClick, on
                 href="https://twitter.com"
                 target="_blank"
                 referrerPolicy="no-referrer"
-                className="p-1.5 bg-white border border-slate-200/60 hover:bg-slate-100 text-slate-450 hover:text-slate-900 rounded-lg transition-colors duration-150"
+                className="p-1.5 bg-white border border-slate-200/60 hover:bg-slate-100 text-slate-450 hover:text-red-650 rounded-lg transition-colors duration-150"
                 aria-label="X (formerly Twitter)"
               >
                 <Twitter className="h-3.5 w-3.5" />
@@ -172,7 +176,7 @@ export default function PublicFooter({ onOrganizerClick, onBrowseEventsClick, on
                 href="https://instagram.com"
                 target="_blank"
                 referrerPolicy="no-referrer"
-                className="p-1.5 bg-white border border-slate-200/60 hover:bg-slate-100 text-slate-450 hover:text-slate-900 rounded-lg transition-colors duration-150"
+                className="p-1.5 bg-white border border-slate-200/60 hover:bg-slate-100 text-slate-450 hover:text-red-650 rounded-lg transition-colors duration-150"
                 aria-label="Instagram"
               >
                 <Instagram className="h-3.5 w-3.5" />
@@ -181,7 +185,7 @@ export default function PublicFooter({ onOrganizerClick, onBrowseEventsClick, on
                 href="https://youtube.com"
                 target="_blank"
                 referrerPolicy="no-referrer"
-                className="p-1.5 bg-white border border-slate-200/60 hover:bg-slate-100 text-slate-450 hover:text-slate-900 rounded-lg transition-colors duration-150"
+                className="p-1.5 bg-white border border-slate-200/60 hover:bg-slate-100 text-slate-450 hover:text-red-650 rounded-lg transition-colors duration-150"
                 aria-label="YouTube"
               >
                 <Youtube className="h-3.5 w-3.5" />

@@ -96,15 +96,20 @@ export interface PayoutRequest {
   organizerName: string;
   amount: number;
   availableBalanceAtRequest: number;
-  paymentMethod: 'mpesa' | 'bank' | 'airtime';
+  paymentMethod: 'mpesa' | 'bank';
   accountDetails: string;
   notes?: string;
   status: 'pending' | 'approved' | 'rejected' | 'processed';
   requestedAt: string;
   approvedAt?: string;
   approvedBy?: string;
+  approvedByName?: string;
   processedAt?: string;
+  processedBy?: string;
+  processedByName?: string;
+  confirmationCode?: string;
   rejectionReason?: string;
+  organizerKycStatus?: string;
 }
 
 export interface AuditLog {
@@ -126,4 +131,11 @@ export interface Payout {
   mpesaTransactionId?: string;
   requestedAt: string;
   processedAt?: string;
+  payoutRequestId?: string;
+  processedBy?: string;
+  processedByName?: string;
+  confirmationCode?: string;
+  paymentMethod?: string;
+  recipientName?: string;
+  recipientId?: string;
 }

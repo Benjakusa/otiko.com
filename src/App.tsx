@@ -21,13 +21,16 @@ import PublicFooter from "./components/PublicFooter";
 import PolicyPages, { PolicySection } from "./components/policies/PolicyPages";
 import UserDashboard from "./pages/UserDashboard";
 import AdminDashboard from "./components/AdminDashboard";
+import DeleteAccountSection from "./components/DeleteAccountSection";
+import CookieConsentBanner from "./components/CookieConsentBanner";
 
 export default function App() {
   // Navigation Tabs state
   // "public" | "dashboard" | "events" | "wallet" | "kyc" | "admin" | "login" | "signup" | "forgot-password" | "policies"
-  const [activeTab, setActiveTab] = useState<"public" | "dashboard" | "events" | "wallet" | "kyc" | "scanner" | "admin" | "login" | "signup" | "forgot-password" | "policies">("public");
+  const [activeTab, setActiveTab] = useState<"public" | "dashboard" | "events" | "wallet" | "kyc" | "scanner" | "admin" | "login" | "signup" | "forgot-password" | "policies" | "settings">("public");
   const [activePolicyTab, setActivePolicyTab] = useState<PolicySection>("refund");
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [cookiePreferencesOpen, setCookiePreferencesOpen] = useState(false);
 
   useEffect(() => {
     setMobileSidebarOpen(false);
@@ -45,7 +48,7 @@ export default function App() {
   // Admin login is unified with the organizer login page — role field determines redirect
 
   // Guard: redirect unauthenticated users to login when accessing restricted tabs
-  const restrictedTabs = ["dashboard", "events", "wallet", "kyc", "scanner", "admin"];
+  const restrictedTabs = ["dashboard", "events", "wallet", "kyc", "scanner", "admin", "settings"];
   useEffect(() => {
     if (restrictedTabs.includes(activeTab) && token === "user-default-uid") {
       const checkAuth = async () => {
@@ -85,6 +88,12 @@ export default function App() {
 
   // Wallet Payout Form State
   const [payoutAmount, setPayoutAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"mpesa" | "bank" | "">("");
+  const [mpesaPhone, setMpesaPhone] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [accountHolder, setAccountHolder] = useState("");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [branch, setBranch] = useState("");
   const [payoutError, setPayoutError] = useState<string | null>(null);
   const [payoutSuccess, setPayoutSuccess] = useState<string | null>(null);
   const [payoutLoading, setPayoutLoading] = useState(false);
@@ -314,7 +323,7 @@ export default function App() {
   };
 
   // Handler: Submit Payout Request
-  const handlePayoutRequest = async (e: React.FormEvent) => {
+  const handleSubmitPayout = async (e: React.FormEvent) => {
     e.preventDefault();
     setPayoutError(null);
     setPayoutSuccess(null);
@@ -325,16 +334,31 @@ export default function App() {
       return;
     }
 
+    if (!paymentMethod) { setPayoutError("Select payout method"); return; }
+    if (paymentMethod === "mpesa" && !mpesaPhone) { setPayoutError("Enter M-Pesa phone number"); return; }
+    if (paymentMethod === "bank" && (!accountHolder || !accountNumber || !bankName || !branch)) {
+      setPayoutError("Complete bank details"); return;
+    }
+
     setPayoutLoading(true);
 
     try {
+      const body: any = { amount: amt, paymentMethod };
+      if (paymentMethod === "mpesa") {
+        body.phoneNumber = mpesaPhone;
+      } else {
+        body.bankAccountHolder = accountHolder;
+        body.bankAccountNumber = accountNumber;
+        body.bankName = bankName;
+        body.bankBranchName = branch;
+      }
       const res = await fetch("/api/wallet/payout-request", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({ amount: amt })
+        body: JSON.stringify(body)
       });
 
       const data = await res.json();
@@ -343,6 +367,12 @@ export default function App() {
       } else {
         setPayoutSuccess(`Payout request of KES ${amt.toLocaleString()} submitted.`);
         setPayoutAmount("");
+        setPaymentMethod("");
+        setMpesaPhone("");
+        setAccountHolder("");
+        setAccountNumber("");
+        setBankName("");
+        setBranch("");
         setTimeout(() => fetchData(), 2500);
       }
     } catch (err) {
@@ -584,7 +614,7 @@ export default function App() {
     <div className="flex h-screen w-full bg-[#F3F4F6] font-sans text-slate-800 overflow-hidden">
       
       {/* SIDEBAR MOBILE BACKDROP */}
-      {!["public", "login", "signup", "forgot-password", "policies", "admin"].includes(activeTab) && mobileSidebarOpen && (
+      {!["public", "login", "signup", "forgot-password", "policies", "admin", "settings"].includes(activeTab) && mobileSidebarOpen && (
         <div 
           className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-40 md:hidden transition-opacity duration-300"
           onClick={() => setMobileSidebarOpen(false)}
@@ -592,7 +622,7 @@ export default function App() {
       )}
 
       {/* 1. SIDEBAR NAVIGATION */}
-      {!["public", "login", "signup", "forgot-password", "policies", "admin"].includes(activeTab) && (
+      {!["public", "login", "signup", "forgot-password", "policies", "admin", "settings"].includes(activeTab) && (
         <aside className={`bg-white flex flex-col h-full border-r border-slate-200 shrink-0 text-slate-700 transition-all duration-300 z-50
           fixed inset-y-0 left-0 w-64 md:relative md:inset-auto md:translate-x-0
           ${mobileSidebarOpen ? "translate-x-0 animate-fade-in" : "-translate-x-full"}
@@ -600,11 +630,8 @@ export default function App() {
         >
           {/* BRAND HEADER */}
           <div className="p-6 flex items-center justify-center lg:justify-start gap-3 border-b border-slate-100 pb-5">
-            <div className="w-8 h-8 bg-red-650 rounded flex items-center justify-center font-bold text-white text-base shrink-0">
-              O
-            </div>
+            <img src="/assets/otikologo.png" alt="Otiko" className="h-6 w-auto" />
             <div className="md:hidden lg:block">
-              <h1 className="text-lg font-bold text-slate-900 tracking-tight leading-none">Otiko<span className="text-red-500">.com</span></h1>
               <span className="text-[9px] uppercase tracking-wider text-slate-400 block mt-1">Organizer</span>
             </div>
           </div>
@@ -670,6 +697,18 @@ export default function App() {
               <ScanLine className="h-4 w-4 shrink-0" />
               <span className="md:hidden lg:inline">Scan Ticket</span>
             </button>
+
+            <button
+              onClick={() => setActiveTab("settings")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all md:justify-center lg:justify-start ${
+                activeTab === "settings"
+                  ? "bg-slate-100 text-slate-900 shadow-sm font-semibold"
+                  : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+              }`}
+            >
+              <Settings className="h-4 w-4 shrink-0" />
+              <span className="md:hidden lg:inline">Settings</span>
+            </button>
           </nav>
         </aside>
       )}
@@ -681,15 +720,8 @@ export default function App() {
         {activeTab === "public" ? (
           <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-8 flex items-center justify-between shadow-sm shrink-0 z-10 w-full">
             {/* 1. LOGO */}
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-red-650 rounded flex items-center justify-center font-bold text-white text-base shadow-sm">
-                O
-              </div>
-              <div>
-                <h1 className="text-base font-extrabold tracking-tight text-slate-900 leading-none flex items-center gap-1">
-                  Otiko<span className="text-red-500 font-bold">.com</span>
-                </h1>
-              </div>
+            <div className="flex items-center">
+              <img src="/assets/otikologo.png" alt="Otiko" className="h-7 w-auto" />
             </div>
 
             {/* 2. ACTIONS AND DETAILS (CONTACTS, PROFILE) */}
@@ -704,19 +736,10 @@ export default function App() {
                 0722839617
               </span>
 
-              {/* Admin login — uses unified login page with role-based redirect */}
-              <button
-                onClick={() => setActiveTab("login")}
-                className="text-xs font-semibold text-white bg-black hover:bg-red-600 hover:text-black border border-black hover:border-red-600 px-3 py-1.5 rounded-lg transition cursor-pointer"
-                title="Admin / Organizer Login"
-              >
-                Login
-              </button>
-
               {/* Profile icon to open event organizers sign-up/sign-in portal */}
               <button
                 onClick={() => setActiveTab("login")}
-                className="w-9 h-9 rounded-full bg-black hover:bg-red-600 hover:text-black hover:scale-105 active:scale-95 text-white flex items-center justify-center transition shadow-sm cursor-pointer"
+                className="w-9 h-9 rounded-full bg-red-600 hover:bg-blue-600 hover:text-white hover:scale-105 active:scale-95 text-white flex items-center justify-center transition shadow-sm cursor-pointer"
                 title="Event Organizer Workspace"
               >
                 <User className="h-4.5 w-4.5 text-white" />
@@ -742,7 +765,7 @@ export default function App() {
             <div className="flex items-center gap-2 sm:gap-4">
               <button
                 onClick={() => setActiveTab("public")}
-                className="text-xs font-semibold text-white bg-black hover:bg-red-600 hover:text-black flex items-center gap-1 px-2 py-1.5 sm:px-2.5 sm:py-1.5 border border-black hover:border-red-600 rounded-lg transition cursor-pointer"
+                className="text-xs font-semibold text-white bg-red-600 hover:bg-blue-600 hover:text-white flex items-center gap-1 px-2 py-1.5 sm:px-2.5 sm:py-1.5 border border-red-600 hover:border-blue-600 rounded-lg transition cursor-pointer"
               >
                 <ExternalLink className="h-3.5 w-3.5 text-slate-400" />
                 <span className="hidden xs:inline">Exit Workspace</span>
@@ -754,7 +777,7 @@ export default function App() {
         )}
 
         {/* INNER SCROLLABLE PANEL */}
-        <div className={`flex-1 overflow-y-auto bg-[#F3F4F6] ${activeTab === "public" ? "" : "p-4 sm:p-8 space-y-8"}`}>
+        <div className={`flex-1 overflow-y-auto bg-[#F3F4F6] ${activeTab === "public" || activeTab === "settings" ? "" : "p-4 sm:p-8 space-y-8"}`}>
           
           {/* ==================================== TAB 1: PUBLIC BUYER PORTAL ==================================== */}
           {activeTab === "public" && (
@@ -797,7 +820,7 @@ export default function App() {
                           const el = document.getElementById("hero-search-input");
                           if (el) el.focus();
                         }}
-                        className="bg-black hover:bg-red-600 hover:text-black text-white font-bold text-xs px-6 py-3 rounded-xl flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer shrink-0 w-full sm:w-auto"
+                        className="bg-red-600 hover:bg-blue-600 hover:text-white text-white font-bold text-xs px-6 py-3 rounded-xl flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer shrink-0 w-full sm:w-auto"
                       >
                         <Search className="h-4 w-4" />
                         <span>Search</span>
@@ -806,7 +829,7 @@ export default function App() {
                       <select
                         value={selectedStatusFilter}
                         onChange={(e) => setSelectedStatusFilter(e.target.value)}
-                        className="bg-slate-900/80 backdrop-blur-md text-xs border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none cursor-pointer w-full sm:w-auto"
+                        className="bg-red-600/80 backdrop-blur-md text-xs border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none cursor-pointer w-full sm:w-auto"
                       >
                         <option value="all" className="bg-slate-900 text-white">All Events status</option>
                         <option value="active" className="bg-slate-900 text-white">Active Only</option>
@@ -815,7 +838,7 @@ export default function App() {
 
                       <button 
                         onClick={fetchData}
-                        className="p-3 bg-slate-900/80 backdrop-blur-md hover:bg-slate-800 border border-white/20 rounded-xl transition text-slate-200 hover:text-white cursor-pointer"
+                        className="p-3 bg-red-600/80 backdrop-blur-md hover:bg-blue-600 border border-white/20 rounded-xl transition text-slate-200 hover:text-white cursor-pointer"
                         title="Sync Database"
                       >
                         <RefreshCw className="h-4 w-4 animate-spin-hover" />
@@ -925,7 +948,7 @@ export default function App() {
                               <button
                                 onClick={() => setSelectedEvent(evt)}
                                 disabled={isSoldOut || evt.status !== "active"}
-                                className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-semibold py-2 px-4 rounded-lg transition"
+                                className="bg-red-600 hover:bg-blue-600 hover:text-white text-white text-xs font-semibold py-2 px-4 rounded-lg transition"
                               >
                                 {isSoldOut ? "Tickets Depleted" : "Buy Ticket Fast"}
                               </button>
@@ -947,6 +970,7 @@ export default function App() {
                   setActiveTab("policies");
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}
+                onCookiePreferencesClick={() => setCookiePreferencesOpen(true)}
               />
             </div>
           )}
@@ -967,7 +991,7 @@ export default function App() {
                     setActiveTab("events");
                     setShowAddEvent(true);
                   }}
-                  className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+                  className="bg-red-600 hover:bg-blue-600 hover:text-white text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center gap-1.5 transition shadow-sm cursor-pointer"
                 >
                   <Plus className="h-4 w-4" /> Create New Event
                 </button>
@@ -1170,7 +1194,7 @@ export default function App() {
 
                 <button
                   onClick={() => setShowAddEvent(!showAddEvent)}
-                  className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center gap-2 transition cursor-pointer"
+                  className="bg-red-600 hover:bg-blue-600 hover:text-white text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center gap-2 transition cursor-pointer"
                 >
                   {showAddEvent ? "Hide Form" : <><Plus className="h-4 w-4" /> Add Custom Event</>}
                 </button>
@@ -1364,7 +1388,7 @@ export default function App() {
                     </button>
                     <button
                       type="submit"
-                      className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold py-2 px-5 rounded-xl transition shadow-sm"
+                      className="bg-red-600 hover:bg-blue-600 hover:text-white text-white text-xs font-bold py-2 px-5 rounded-xl transition shadow-sm"
                     >
                       Publish Live Ticket Sales
                     </button>
@@ -1672,7 +1696,7 @@ export default function App() {
                               a.click();
                               URL.revokeObjectURL(url);
                             }}
-                            className="w-full bg-black hover:bg-red-600 hover:text-black text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer"
+                            className="w-full bg-red-600 hover:bg-blue-600 hover:text-white text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer"
                           >
                             <Download className="h-4 w-4" /> Download Attendee Guest CSV
                           </button>
@@ -1796,7 +1820,7 @@ export default function App() {
                       </button>
                       <button
                         type="submit"
-                        className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold py-2 px-5 rounded-lg transition"
+                        className="bg-red-600 hover:bg-blue-600 hover:text-white text-white text-xs font-bold py-2 px-5 rounded-lg transition"
                       >
                         Publish Changes
                       </button>
@@ -1829,7 +1853,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={handleDeleteEvent}
-                        className="bg-black hover:bg-red-600 hover:text-black text-white px-4 py-2 rounded-lg font-semibold text-sm transition shadow-sm cursor-pointer"
+                        className="bg-red-600 hover:bg-blue-600 hover:text-white text-white px-4 py-2 rounded-lg font-semibold text-sm transition shadow-sm cursor-pointer"
                       >
                         Cancel Event
                       </button>
@@ -1897,7 +1921,7 @@ export default function App() {
                     <p className="text-xs text-slate-400 mt-1">Request an instant payout to your registered number.</p>
                   </div>
 
-                  <form onSubmit={handlePayoutRequest} className="space-y-4">
+                  <form onSubmit={handleSubmitPayout} className="space-y-4">
                     {payoutError && (
                       <div className="bg-rose-50 text-rose-600 text-xs p-3 rounded-xl border border-rose-100 flex items-center gap-2">
                         <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -1910,16 +1934,6 @@ export default function App() {
                         <span>{payoutSuccess}</span>
                       </div>
                     )}
-
-                    <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase">Payout Number</label>
-                      <input
-                        type="text"
-                        disabled
-                        value={organizer?.mpesaPayoutNumber || "254712345678"}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs text-slate-500 font-mono"
-                      />
-                    </div>
 
                     <div className="space-y-1">
                       <label className="block text-[10px] font-bold text-slate-500 uppercase">Withdrawal Amount (KES)</label>
@@ -1936,10 +1950,79 @@ export default function App() {
                       </div>
                     </div>
 
+                    <div className="space-y-3">
+                      <label className="text-sm font-semibold text-slate-700">Payout Method</label>
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setPaymentMethod("mpesa")}
+                          className={`px-4 py-2 rounded-lg border text-sm font-semibold ${
+                            paymentMethod === "mpesa"
+                              ? "bg-black text-white border-black"
+                              : "bg-white text-black border-slate-300"
+                          }`}
+                        >
+                          M-Pesa
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentMethod("bank")}
+                          className={`px-4 py-2 rounded-lg border text-sm font-semibold ${
+                            paymentMethod === "bank"
+                              ? "bg-black text-white border-black"
+                              : "bg-white text-black border-slate-300"
+                          }`}
+                        >
+                          Bank Transfer
+                        </button>
+                      </div>
+                    </div>
+
+                    {paymentMethod === "mpesa" && (
+                      <div className="mt-4">
+                        <label className="text-sm font-medium">Phone Number</label>
+                        <input
+                          value={mpesaPhone}
+                          onChange={(e) => setMpesaPhone(e.target.value)}
+                          placeholder="07XXXXXXXX"
+                          className="w-full mt-1 border rounded-lg p-2"
+                        />
+                      </div>
+                    )}
+
+                    {paymentMethod === "bank" && (
+                      <div className="space-y-3 mt-4">
+                        <input
+                          placeholder="Account Holder Name"
+                          value={accountHolder}
+                          onChange={(e) => setAccountHolder(e.target.value)}
+                          className="w-full border rounded-lg p-2"
+                        />
+                        <input
+                          placeholder="Account Number"
+                          value={accountNumber}
+                          onChange={(e) => setAccountNumber(e.target.value)}
+                          className="w-full border rounded-lg p-2"
+                        />
+                        <input
+                          placeholder="Bank Name"
+                          value={bankName}
+                          onChange={(e) => setBankName(e.target.value)}
+                          className="w-full border rounded-lg p-2"
+                        />
+                        <input
+                          placeholder="Branch Name"
+                          value={branch}
+                          onChange={(e) => setBranch(e.target.value)}
+                          className="w-full border rounded-lg p-2"
+                        />
+                      </div>
+                    )}
+
                     <button
                       type="submit"
                       disabled={payoutLoading || !payoutAmount}
-                      className="w-full bg-black hover:bg-red-600 hover:text-black disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                      className="w-full bg-red-600 hover:bg-blue-600 hover:text-white disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                     >
                       {payoutLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4 text-emerald-400" />}
                       Request Payout
@@ -2187,7 +2270,7 @@ export default function App() {
                     <div className="border-t border-slate-100 pt-4 flex justify-end">
                       <button
                         type="submit"
-                        className="bg-black hover:bg-red-600 hover:text-black text-white font-bold py-2 px-5 rounded-xl text-xs transition cursor-pointer"
+                        className="bg-red-600 hover:bg-blue-600 hover:text-white text-white font-bold py-2 px-5 rounded-xl text-xs transition cursor-pointer"
                       >
                         Update Profile Coordinates
                       </button>
@@ -2280,7 +2363,7 @@ export default function App() {
                       <button
                         type="submit"
                         disabled={kycLoading || !kycBusinessName}
-                        className="w-full bg-black hover:bg-red-600 hover:text-black disabled:opacity-50 text-white font-bold py-2 rounded-xl text-xs transition cursor-pointer flex justify-center items-center gap-1.5"
+                        className="w-full bg-red-600 hover:bg-blue-600 hover:text-white disabled:opacity-50 text-white font-bold py-2 rounded-xl text-xs transition cursor-pointer flex justify-center items-center gap-1.5"
                       >
                         {kycLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                         Submit Verification Dossier
@@ -2291,6 +2374,27 @@ export default function App() {
 
               </div>
 
+            </div>
+          )}
+
+          {/* ==================================== TAB: SETTINGS ==================================== */}
+          {activeTab === "settings" && (
+            <div className="max-w-2xl mx-auto space-y-6 animate-fade-in py-6 px-4 sm:px-8">
+              <div>
+                <h3 className="text-xl font-extrabold text-slate-950 tracking-tight">Settings</h3>
+                <p className="text-xs text-slate-500 mt-1">Manage your account and preferences.</p>
+              </div>
+
+              <DeleteAccountSection
+                token={token}
+                organizerName={organizer?.name || ""}
+                onAccountDeleted={() => {
+                  setOrganizer(null);
+                  setToken("");
+                  localStorage.removeItem("otiko_auth_token");
+                  setActiveTab("public");
+                }}
+              />
             </div>
           )}
 
@@ -2318,7 +2422,11 @@ export default function App() {
         />
       )}
 
-      {/* 4. (Removed: admin password modal — unified login handles both admin and organizer) */}
+      {/* 4. COOKIE CONSENT BANNER */}
+      <CookieConsentBanner
+        open={cookiePreferencesOpen}
+        onOpenChange={setCookiePreferencesOpen}
+      />
 
     </div>
   );

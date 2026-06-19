@@ -222,7 +222,7 @@ export default function LoginPage({
           type="submit"
           disabled={loading}
           aria-busy={loading}
-              className="w-full bg-black hover:bg-red-600 hover:text-black disabled:bg-slate-300 text-white font-bold py-3 rounded-xl text-xs transition-colors duration-250 flex items-center justify-center gap-2 mt-2 cursor-pointer"
+              className="w-full bg-red-600 hover:bg-blue-600 hover:text-white disabled:bg-slate-300 text-white font-bold py-3 rounded-xl text-xs transition-colors duration-250 flex items-center justify-center gap-2 mt-2 cursor-pointer"
         >
           {loading ? (
             <>

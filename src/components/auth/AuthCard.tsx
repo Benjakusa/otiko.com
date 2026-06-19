@@ -23,15 +23,8 @@ export default function AuthCard({ children, onBackToHome }: AuthCardProps) {
       {/* Main Authed Box container */}
       <div className="bg-white rounded-3xl border border-slate-200/60 shadow-xl max-w-[420px] w-full p-8 space-y-6 shrink-0 relative">
         {/* Brand visual header inside card */}
-        <div className="flex flex-col items-center space-y-2">
-          <div className="w-10 h-10 bg-[#0F172A] rounded-xl flex items-center justify-center font-bold text-white text-xl shadow-md">
-            O
-          </div>
-          <div className="text-center">
-            <h1 className="text-base font-extrabold text-slate-900 tracking-tight leading-none flex items-center justify-center gap-0.5">
-              Otiko<span className="text-red-500">.com</span>
-            </h1>
-          </div>
+        <div className="flex justify-center">
+          <img src="/assets/otikologo.png" alt="Otiko" className="h-8 w-auto" />
         </div>
 
         {children}

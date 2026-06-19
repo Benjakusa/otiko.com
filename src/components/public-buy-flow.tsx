@@ -518,7 +518,7 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
               <button
                 onClick={() => handleDownloadTicket(index)}
                 disabled={downloading === index}
-                className="bg-black hover:bg-red-600 hover:text-black text-white font-medium py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 transition disabled:bg-slate-300"
+                className="bg-red-600 hover:bg-blue-600 hover:text-white text-white font-medium py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 transition disabled:bg-slate-300"
               >
                 {downloading === index ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -685,7 +685,7 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
                 <span className="text-slate-500 text-xs block">Total</span>
                 <span className="text-lg font-mono font-bold text-red-600">KES {((activeCategory?.price || 0) * quantity).toLocaleString()}</span>
               </div>
-              <button type="submit" disabled={loading || !selectedCategory} className="bg-black hover:bg-red-600 hover:text-black text-white font-medium px-6 sm:px-8 py-3 rounded-xl flex items-center gap-2 disabled:bg-slate-200 disabled:text-slate-400 transition text-sm">
+              <button type="submit" disabled={loading || !selectedCategory} className="bg-red-600 hover:bg-blue-600 hover:text-white text-white font-medium px-6 sm:px-8 py-3 rounded-xl flex items-center gap-2 disabled:bg-slate-200 disabled:text-slate-400 transition text-sm">
                 {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <TicketIcon className="h-5 w-5" />}
                 Reserve
               </button>
@@ -739,7 +739,7 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
             <button
               onClick={handleDownloadAll}
               disabled={downloading === "all"}
-              className="w-full bg-black hover:bg-red-600 hover:text-black text-white font-semibold py-3 rounded-xl text-sm flex items-center justify-center gap-2 transition disabled:bg-slate-300"
+              className="w-full bg-red-600 hover:bg-blue-600 hover:text-white text-white font-semibold py-3 rounded-xl text-sm flex items-center justify-center gap-2 transition disabled:bg-slate-300"
             >
               {downloading === "all" ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -773,7 +773,7 @@ export default function PublicBuyFlow({ event, onClose, onPurchaseComplete }: Pu
                 <button
                   onClick={() => { const idx = viewingTicket; setViewingTicket(null); setTimeout(() => handleDownloadTicket(idx), 100); }}
                   disabled={downloading === viewingTicket}
-                  className="flex-1 bg-black hover:bg-red-600 hover:text-black text-white font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 transition disabled:bg-slate-300"
+                  className="flex-1 bg-red-600 hover:bg-blue-600 hover:text-white text-white font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2 transition disabled:bg-slate-300"
                 >
                   {downloading === viewingTicket ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                   Download PDF

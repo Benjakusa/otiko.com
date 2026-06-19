@@ -59,8 +59,13 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
   };
 
   const [payoutAmount, setPayoutAmount] = useState("");
-  const [payoutMethod, setPayoutMethod] = useState<"mpesa" | "bank" | "airtime">("mpesa");
-  const [payoutAccount, setPayoutAccount] = useState(organizer?.mpesaPayoutNumber || "");
+  const [paymentMethod, setPaymentMethod] = useState<"mpesa" | "bank" | "">("");
+  const [mpesaPhone, setMpesaPhone] = useState("");
+
+  const [bankName, setBankName] = useState("");
+  const [accountHolder, setAccountHolder] = useState("");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [branch, setBranch] = useState("");
   const [payoutNotes, setPayoutNotes] = useState("");
   const [payoutLoading, setPayoutLoading] = useState(false);
   const [payoutError, setPayoutError] = useState("");
@@ -95,23 +100,49 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
     finally { setSaving(false); }
   };
 
-  const handlePayoutRequest = async (e: React.FormEvent) => {
+  const resetPayoutForm = () => {
+    setPayoutAmount("");
+    setPaymentMethod("");
+    setMpesaPhone("");
+    setAccountHolder("");
+    setAccountNumber("");
+    setBankName("");
+    setBranch("");
+    setPayoutNotes("");
+  };
+
+  const handleSubmitPayout = async (e: React.FormEvent) => {
     e.preventDefault();
-    const amt = Number(payoutAmount);
-    if (isNaN(amt) || amt <= 0) { setPayoutError("Enter a valid amount"); return; }
-    if (!payoutAccount.trim()) { setPayoutError("Enter account details"); return; }
+    if (!paymentMethod) { setPayoutError("Select payout method"); return; }
+
+    if (paymentMethod === "mpesa" && !mpesaPhone) { setPayoutError("Enter M-Pesa phone number"); return; }
+
+    if (paymentMethod === "bank" && (!accountHolder || !accountNumber || !bankName || !branch)) {
+      setPayoutError("Complete bank details");
+      return;
+    }
+
     setPayoutLoading(true); setPayoutError(""); setPayoutSuccess("");
     try {
       const token = localStorage.getItem("otiko_auth_token") || "user-default-uid";
+      const body: any = { amount: Number(payoutAmount), paymentMethod, notes: payoutNotes };
+      if (paymentMethod === "mpesa") {
+        body.phoneNumber = mpesaPhone;
+      } else {
+        body.bankAccountHolder = accountHolder;
+        body.bankAccountNumber = accountNumber;
+        body.bankName = bankName;
+        body.bankBranchName = branch;
+      }
       const res = await fetch("/api/wallet/payout-request", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ amount: amt, paymentMethod: payoutMethod, accountDetails: payoutAccount, notes: payoutNotes })
+        body: JSON.stringify(body)
       });
       const data = await res.json();
       if (res.ok) {
-        setPayoutSuccess(`Payout request for KES ${amt.toLocaleString()} submitted successfully!`);
-        setPayoutAmount(""); setPayoutNotes(""); setPayoutAccount(organizer?.mpesaPayoutNumber || "");
+        setPayoutSuccess(`Payout request for KES ${Number(payoutAmount).toLocaleString()} submitted successfully!`);
+        resetPayoutForm();
         onRefresh();
       } else { setPayoutError(data.error || "Request failed"); }
     } catch { setPayoutError("Network error"); }
@@ -158,7 +189,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
         {navItems.map(item => (
           <button key={item.key} onClick={() => setSection(item.key)}
             className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg transition ${
-              section === item.key ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+              section === item.key ? "bg-red-600 text-white shadow-sm" : "text-slate-500 hover:text-slate-800 hover:bg-slate-100"
             }`}
           >
             {item.icon}{item.label}
@@ -226,7 +257,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
           <div className="flex justify-between items-center">
             <p className="text-xs text-slate-500">{events.length} event{events.length !== 1 ? "s" : ""} registered</p>
             <button onClick={() => setShowCreateForm(!showCreateForm)}
-              className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold py-2 px-4 rounded-lg flex items-center gap-1.5 transition"
+              className="bg-red-600 hover:bg-blue-600 text-white text-xs font-semibold py-2 px-4 rounded-lg flex items-center gap-1.5 transition"
             ><Plus className="h-4 w-4" /> {showCreateForm ? "Cancel" : "New Event"}</button>
           </div>
 
@@ -296,7 +327,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
 
               <div className="flex justify-end gap-3 pt-2 border-t border-slate-100">
                 <button type="button" onClick={() => setShowCreateForm(false)} className="text-xs font-semibold text-slate-600 px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition">Cancel</button>
-                <button type="submit" disabled={saving} className="bg-slate-900 hover:bg-red-600 text-white text-xs font-semibold px-5 py-2 rounded-lg transition flex items-center gap-1.5">
+                <button type="submit" disabled={saving} className="bg-red-600 hover:bg-blue-600 text-white text-xs font-semibold px-5 py-2 rounded-lg transition flex items-center gap-1.5">
                   {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Create Event
                 </button>
               </div>
@@ -386,13 +417,41 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
           </div>
 
           {/* Payout Request Form */}
-          <div className="bg-white rounded-xl border border-slate-200 p-6">
+          <div className="bg-white rounded-xl border border-slate-200 p-6 relative overflow-hidden">
             <h4 className="text-xs font-bold text-slate-900 uppercase tracking-widest mb-4">Request Payout</h4>
-            <form onSubmit={handlePayoutRequest} className="space-y-4">
-              {payoutError && <div className="bg-rose-50 text-rose-600 text-xs p-3 rounded-lg border border-rose-200">{payoutError}</div>}
-              {payoutSuccess && <div className="bg-emerald-50 text-emerald-600 text-xs p-3 rounded-lg border border-emerald-200 font-medium">{payoutSuccess}</div>}
+            {organizer?.kycStatus !== "verified" ? (
+              <div className="relative">
+                <div className="absolute inset-0 bg-white/60 backdrop-blur-[2px] z-10 flex flex-col items-center justify-center rounded-xl min-h-[240px]">
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 max-w-sm mx-auto text-center shadow-sm">
+                    <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto mb-3" />
+                    <h5 className="font-bold text-slate-900 text-sm mb-1">Verification Required</h5>
+                    <p className="text-xs text-slate-500 mb-4">You must verify your account before you can request a payout. Please complete the KYC verification process first.</p>
+                    <button onClick={() => setSection("verification")}
+                      className="bg-red-600 hover:bg-blue-600 text-white text-xs font-bold px-5 py-2.5 rounded-lg transition"
+                    >Go to Verification</button>
+                  </div>
+                </div>
+                <div className="opacity-30 pointer-events-none">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-bold text-slate-600 uppercase">Amount (KES)</label>
+                      <div className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs h-9" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="block text-[11px] font-bold text-slate-600 uppercase">Payment Method</label>
+                      <div className="flex gap-3 mt-1">
+                        <div className="px-4 py-2.5 rounded-lg border text-xs bg-slate-100 text-slate-400 border-slate-200">M-Pesa</div>
+                        <div className="px-4 py-2.5 rounded-lg border text-xs bg-slate-100 text-slate-400 border-slate-200">Bank Transfer</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmitPayout} className="space-y-4">
+                {payoutError && <div className="bg-rose-50 text-rose-600 text-xs p-3 rounded-lg border border-rose-200">{payoutError}</div>}
+                {payoutSuccess && <div className="bg-emerald-50 text-emerald-600 text-xs p-3 rounded-lg border border-emerald-200 font-medium">{payoutSuccess}</div>}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="block text-[11px] font-bold text-slate-600 uppercase">Amount (KES)</label>
                   <input type="number" required min="101" placeholder="e.g. 5000"
@@ -401,41 +460,92 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
                   />
                   <p className="text-[10px] text-slate-400">Max: KES {walletOverview?.availableBalance?.toLocaleString() || "0"}</p>
                 </div>
-                <div className="space-y-1.5">
-                  <label className="block text-[11px] font-bold text-slate-600 uppercase">Payment Method</label>
-                  <select value={payoutMethod} onChange={(e) => setPayoutMethod(e.target.value as any)}
-                    className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 rounded-lg px-3 py-2.5 text-xs"
-                  >
-                    <option value="mpesa">M-Pesa</option>
-                    <option value="bank">Bank Transfer</option>
-                    <option value="airtime">Airtime</option>
-                  </select>
+
+                <div className="space-y-3">
+                  <label className="text-sm font-semibold text-slate-700">Payout Method</label>
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("mpesa")}
+                      className={`px-4 py-2 rounded-lg border text-sm font-semibold ${
+                        paymentMethod === "mpesa"
+                          ? "bg-black text-white border-black"
+                          : "bg-white text-black border-slate-300"
+                      }`}
+                    >
+                      M-Pesa
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentMethod("bank")}
+                      className={`px-4 py-2 rounded-lg border text-sm font-semibold ${
+                        paymentMethod === "bank"
+                          ? "bg-black text-white border-black"
+                          : "bg-white text-black border-slate-300"
+                      }`}
+                    >
+                      Bank Transfer
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              <div className="space-y-1.5">
-                <label className="block text-[11px] font-bold text-slate-600 uppercase">Account Details</label>
-                <input type="text" required placeholder={payoutMethod === "mpesa" ? "254712345678" : "Bank account details"}
-                  value={payoutAccount} onChange={(e) => setPayoutAccount(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 rounded-lg px-3 py-2.5 text-xs font-mono"
-                />
-              </div>
+                {paymentMethod === "mpesa" && (
+                  <div className="mt-4">
+                    <label className="text-sm font-medium">Phone Number</label>
+                    <input
+                      value={mpesaPhone}
+                      onChange={(e) => setMpesaPhone(e.target.value)}
+                      placeholder="07XXXXXXXX"
+                      className="w-full mt-1 border rounded-lg p-2"
+                    />
+                  </div>
+                )}
 
-              <div className="space-y-1.5">
-                <label className="block text-[11px] font-bold text-slate-600 uppercase">Notes <span className="font-normal text-slate-400">(optional)</span></label>
-                <textarea rows={2} placeholder="Additional notes for this request"
-                  value={payoutNotes} onChange={(e) => setPayoutNotes(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 rounded-lg px-3 py-2 text-xs"
-                />
-              </div>
+                {paymentMethod === "bank" && (
+                  <div className="space-y-3 mt-4">
+                    <input
+                      placeholder="Account Holder Name"
+                      value={accountHolder}
+                      onChange={(e) => setAccountHolder(e.target.value)}
+                      className="w-full border rounded-lg p-2"
+                    />
+                    <input
+                      placeholder="Account Number"
+                      value={accountNumber}
+                      onChange={(e) => setAccountNumber(e.target.value)}
+                      className="w-full border rounded-lg p-2"
+                    />
+                    <input
+                      placeholder="Bank Name"
+                      value={bankName}
+                      onChange={(e) => setBankName(e.target.value)}
+                      className="w-full border rounded-lg p-2"
+                    />
+                    <input
+                      placeholder="Branch Name"
+                      value={branch}
+                      onChange={(e) => setBranch(e.target.value)}
+                      className="w-full border rounded-lg p-2"
+                    />
+                  </div>
+                )}
 
-              <button type="submit" disabled={payoutLoading}
-                className="bg-slate-900 hover:bg-red-600 disabled:bg-slate-300 text-white font-semibold py-2.5 px-6 rounded-lg text-xs transition flex items-center gap-2"
-              >
-                {payoutLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                Submit Payout Request
-              </button>
-            </form>
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-bold text-slate-600 uppercase">Notes <span className="font-normal text-slate-400">(optional)</span></label>
+                  <textarea rows={2} placeholder="Additional notes for this request"
+                    value={payoutNotes} onChange={(e) => setPayoutNotes(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 rounded-lg px-3 py-2 text-xs"
+                  />
+                </div>
+
+                <button type="submit" disabled={payoutLoading}
+                  className="bg-red-600 hover:bg-blue-600 disabled:bg-slate-300 text-white font-semibold py-2.5 px-6 rounded-lg text-xs transition flex items-center gap-2"
+                >
+                  {payoutLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Submit Payout Request
+                </button>
+              </form>
+            )}
           </div>
 
           {/* Payout Requests List */}
@@ -487,9 +597,21 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
                       <span className="font-semibold text-slate-800">KES {p.amount.toLocaleString()}</span>
                       <span className="text-[10px] text-slate-400 ml-2">{p.mpesaTransactionId ? `TXN: ${p.mpesaTransactionId}` : ""}</span>
                     </div>
-                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${
-                      p.status === "completed" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-                    }`}>{p.status}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${
+                        p.status === "completed" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
+                      }`}>{p.status}</span>
+                      {p.status === "completed" && (
+                        <a
+                          href={`/api/organizers/payout-receipt/${p.payoutRequestId || p.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-blue-600 hover:text-red-600 underline font-medium"
+                        >
+                          Download Proof
+                        </a>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

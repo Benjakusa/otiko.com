@@ -28,6 +28,28 @@ const SIDEBAR_ITEMS = [
   { key: "logout", label: "Logout", icon: LogOut },
 ];
 
+function renderAccountDetails(pr: PayoutRequest): React.ReactNode {
+  try {
+    const details = JSON.parse(pr.accountDetails);
+    if (pr.paymentMethod === "mpesa") {
+      return <span className="font-mono text-[10px]">{details.phoneNumber}</span>;
+    }
+    if (pr.paymentMethod === "bank") {
+      return (
+        <div className="text-[10px] leading-tight">
+          <div className="font-semibold">{details.bankAccountHolder}</div>
+          <div className="text-slate-400">{details.bankName}</div>
+          <div className="text-slate-400">A/C: {details.bankAccountNumber}</div>
+          <div className="text-slate-400">Branch: {details.bankBranchName || "-"}</div>
+        </div>
+      );
+    }
+  } catch {
+    // fallback for legacy plain-text accountDetails
+  }
+  return <span className="text-[10px] font-mono">{pr.accountDetails}</span>;
+}
+
 function statusColor(s: string) {
   switch (s) {
     case "pending": return "bg-amber-50 text-amber-700 border-amber-200";
@@ -59,7 +81,7 @@ export default function AdminDashboard({ token, organizer, onLogout }: AdminDash
       <aside className="w-64 bg-white border-r border-slate-200 shrink-0 overflow-y-auto">
         <div className="p-4 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-red-650 rounded flex items-center justify-center font-bold text-white text-sm">O</div>
+            <img src="/assets/otikologo.png" alt="Otiko" className="h-6 w-auto" />
             <div>
               <p className="text-sm font-bold text-slate-900">Admin Panel</p>
               <p className="text-[10px] text-slate-400">{organizer?.name || "Administrator"}</p>
@@ -71,10 +93,8 @@ export default function AdminDashboard({ token, organizer, onLogout }: AdminDash
             <button
               key={item.key}
               onClick={() => setActiveSection(item.key)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                activeSection === item.key
-                  ? "bg-red-650 text-white"
-                  : "text-slate-600 hover:bg-slate-100"
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-xs font-semibold transition cursor-pointer text-slate-600 hover:bg-slate-100 ${
+                activeSection === item.key ? "bg-slate-100" : ""
               }`}
             >
               <item.icon className="h-4 w-4 shrink-0" />
@@ -333,7 +353,7 @@ function VerificationSection({ token }: { token: string }) {
                     <td className="py-3 px-4">
                       {o.kycDocUrl ? (
                         <a href={o.kycDocUrl} target="_blank" rel="noopener noreferrer"
-                          className="text-blue-600 hover:text-blue-800 underline text-[10px] font-semibold"
+                          className="text-blue-600 hover:text-red-600 underline text-[10px] font-semibold"
                         >View Document</a>
                       ) : (
                         <span className="text-slate-400">-</span>
@@ -346,10 +366,10 @@ function VerificationSection({ token }: { token: string }) {
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <button onClick={() => updateKyc(o.id, "verified")}
-                          className="bg-black hover:bg-emerald-700 hover:text-white text-white border border-black px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1"
+                          className="bg-red-600 hover:bg-blue-600 hover:text-white text-white border border-red-600 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1"
                         ><CheckCircle2 className="h-3 w-3" /> Verify</button>
                         <button onClick={() => updateKyc(o.id, "rejected")}
-                          className="bg-black hover:bg-rose-700 hover:text-white text-white border border-black px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1"
+                          className="bg-red-600 hover:bg-blue-600 hover:text-white text-white border border-red-600 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1"
                         ><XCircle className="h-3 w-3" /> Reject</button>
                       </div>
                     </td>
@@ -497,8 +517,8 @@ function TicketsSection({ token }: { token: string }) {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const filtered = tickets.filter(t =>
-    t.ticketNumber.toLowerCase().includes(search.toLowerCase()) ||
-    t.id.toLowerCase().includes(search.toLowerCase())
+    String(t.ticketNumber ?? "").toLowerCase().includes(search.toLowerCase()) ||
+    String(t.id ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -561,20 +581,26 @@ function TicketsSection({ token }: { token: string }) {
 /* ------------------------------------------------------------------ */
 function PayoutsSection({ token }: { token: string }) {
   const [requests, setRequests] = useState<PayoutRequest[]>([]);
+  const [platformBalance, setPlatformBalance] = useState<any>(null);
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejectId, setRejectId] = useState<string | null>(null);
+  const [processId, setProcessId] = useState<string | null>(null);
+  const [confirmationCode, setConfirmationCode] = useState("");
 
   const fetchRequests = useCallback(async () => {
     setLoading(true);
     try {
       const url = filter ? `/api/admin/payout-requests?status=${filter}` : "/api/admin/payout-requests";
       const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) setRequests(await res.json());
-      else setRequests([]);
-    } catch { setRequests([]); }
+      if (res.ok) {
+        const data = await res.json();
+        setRequests(data.requests || []);
+        setPlatformBalance(data.platformBalance || null);
+      } else { setRequests([]); setPlatformBalance(null); }
+    } catch { setRequests([]); setPlatformBalance(null); }
     finally { setLoading(false); }
   }, [token, filter]);
 
@@ -587,10 +613,17 @@ function PayoutsSection({ token }: { token: string }) {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: body ? JSON.stringify(body) : undefined,
       });
-      if (res.ok) { fetchRequests(); if (action === "reject") { setRejectId(null); setRejectReason(""); } }
-      else { const d = await res.json(); alert(d.error || "Action failed"); }
+      if (res.ok) {
+        fetchRequests();
+        if (action === "reject") { setRejectId(null); setRejectReason(""); }
+        if (action === "process") { setProcessId(null); setConfirmationCode(""); }
+      } else { const d = await res.json(); alert(d.error || "Action failed"); }
     } catch { alert("Network error"); }
     finally { setActionLoading(null); }
+  };
+
+  const handleDownloadReceipt = (pr: PayoutRequest) => {
+    window.open(`/api/admin/payout-receipt/${pr.id}`, "_blank");
   };
 
   return (
@@ -614,6 +647,32 @@ function PayoutsSection({ token }: { token: string }) {
         </div>
       </div>
 
+      {/* Live Balance Panel */}
+      {platformBalance && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <p className="text-[10px] text-slate-400 uppercase font-bold">Available Balance</p>
+            <p className={`text-xl font-black font-mono mt-1 ${platformBalance.availableBalance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              KES {platformBalance.availableBalance.toLocaleString()}
+            </p>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <p className="text-[10px] text-slate-400 uppercase font-bold">Net Collected</p>
+            <p className="text-xl font-black font-mono mt-1 text-slate-900">KES {platformBalance.netBalance.toLocaleString()}</p>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <p className="text-[10px] text-slate-400 uppercase font-bold">Reserved / Pending</p>
+            <p className="text-xl font-black font-mono mt-1 text-amber-600">KES {platformBalance.reservedAmount.toLocaleString()}</p>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 p-4">
+            <p className="text-[10px] text-slate-400 uppercase font-bold">Balance After Pending</p>
+            <p className={`text-xl font-black font-mono mt-1 ${(platformBalance.availableBalance) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              KES {(platformBalance.availableBalance).toLocaleString()}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         {loading ? (
           <div className="p-12 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-400" /></div>
@@ -626,6 +685,7 @@ function PayoutsSection({ token }: { token: string }) {
                 <tr className="border-b border-slate-100 bg-slate-50 text-slate-500 uppercase font-bold text-[10px] tracking-wider">
                   <th className="py-3 px-4">ID</th>
                   <th className="py-3 px-4">Organizer</th>
+                  <th className="py-3 px-4">KYC</th>
                   <th className="py-3 px-4">Amount</th>
                   <th className="py-3 px-4">Method</th>
                   <th className="py-3 px-4">Account</th>
@@ -639,40 +699,61 @@ function PayoutsSection({ token }: { token: string }) {
                   <tr key={pr.id} className="hover:bg-slate-50/50">
                     <td className="py-3 px-4 font-mono text-[10px] text-slate-500">{pr.id}</td>
                     <td className="py-3 px-4 font-semibold text-slate-900">{pr.organizerName}</td>
+                    <td className="py-3 px-4">
+                      {pr.organizerKycStatus === "verified" ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Verified</span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-200">Not Verified</span>
+                      )}
+                    </td>
                     <td className="py-3 px-4 font-bold text-slate-900 font-mono">KES {pr.amount.toLocaleString()}</td>
-                    <td className="py-3 px-4 capitalize">{pr.paymentMethod}</td>
-                    <td className="py-3 px-4 font-mono text-[10px] text-slate-500 max-w-[120px] truncate">{pr.accountDetails}</td>
+                    <td className="py-3 px-4">{pr.paymentMethod === "mpesa" ? "M-Pesa" : "Bank Transfer"}</td>
+                    <td className="py-3 px-4 max-w-[160px]">{renderAccountDetails(pr)}</td>
                     <td className="py-3 px-4 text-slate-500">{new Date(pr.requestedAt).toLocaleDateString()}</td>
                     <td className="py-3 px-4">
                       <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase border ${statusColor(pr.status)}`}>{pr.status}</span>
                       {pr.rejectionReason && pr.status === "rejected" && (
                         <div className="text-[10px] text-rose-500 mt-1 max-w-[150px] truncate" title={pr.rejectionReason}>{pr.rejectionReason}</div>
                       )}
+                      {pr.processedByName && pr.status === "processed" && (
+                        <div className="text-[10px] text-slate-400 mt-1">by {pr.processedByName}</div>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-right">
                       {pr.status === "pending" && (
                         <div className="flex items-center justify-end gap-1.5">
                           <button onClick={() => doAction(pr.id, "approve")} disabled={actionLoading === pr.id}
-                            className="bg-black hover:bg-red-600 hover:text-black text-white border border-black px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1 disabled:opacity-50"
+                            className="bg-red-600 hover:bg-blue-600 hover:text-white text-white border border-red-600 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1 disabled:opacity-50"
                           >
                             {actionLoading === pr.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
                             Approve
                           </button>
                           <button onClick={() => setRejectId(rejectId === pr.id ? null : pr.id)}
-                            className="bg-black hover:bg-red-600 hover:text-black text-white border border-black px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1"
+                            className="bg-red-600 hover:bg-blue-600 hover:text-white text-white border border-red-600 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1"
                           ><XCircle className="h-3 w-3" /> Reject</button>
                         </div>
                       )}
                       {pr.status === "approved" && (
-                        <button onClick={() => doAction(pr.id, "process")} disabled={actionLoading === pr.id}
-                          className="bg-black hover:bg-red-600 hover:text-black text-white border border-black px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1 ml-auto disabled:opacity-50"
-                        >
-                          {actionLoading === pr.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowRight className="h-3 w-3" />}
-                          Mark Processed
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => { setProcessId(pr.id); setConfirmationCode(""); }}
+                            disabled={actionLoading === pr.id}
+                            className="bg-red-600 hover:bg-blue-600 hover:text-white text-white border border-red-600 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {actionLoading === pr.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowRight className="h-3 w-3" />}
+                            Process Payment
+                          </button>
+                        </div>
                       )}
                       {pr.status === "rejected" && <span className="text-[10px] text-slate-400 italic">No actions</span>}
-                      {pr.status === "processed" && <span className="text-[10px] text-emerald-600 font-semibold">Completed</span>}
+                      {pr.status === "processed" && (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="text-[10px] text-emerald-600 font-semibold">Completed</span>
+                          <button onClick={() => handleDownloadReceipt(pr)}
+                            className="text-slate-400 hover:text-blue-600 transition p-1"
+                            title="Download Receipt"
+                          ><ArrowRight className="h-3 w-3" /></button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -682,6 +763,7 @@ function PayoutsSection({ token }: { token: string }) {
         )}
       </div>
 
+      {/* Reject Modal */}
       {rejectId && (
         <div className="fixed inset-0 bg-slate-950/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
@@ -697,10 +779,63 @@ function PayoutsSection({ token }: { token: string }) {
               >Cancel</button>
               <button onClick={() => doAction(rejectId, "reject", { reason: rejectReason || "No reason provided" })}
                 disabled={actionLoading === rejectId}
-                className="text-xs font-semibold text-white bg-black hover:bg-red-600 hover:text-black px-4 py-2 rounded-lg transition flex items-center gap-1.5 disabled:opacity-50"
+                className="text-xs font-semibold text-white bg-red-600 hover:bg-blue-600 hover:text-white px-4 py-2 rounded-lg transition flex items-center gap-1.5 disabled:opacity-50"
               >
                 {actionLoading === rejectId ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                 Confirm Rejection
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Process Modal with Confirmation Code */}
+      {processId && (
+        <div className="fixed inset-0 bg-slate-950/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-5">
+            <h4 className="font-bold text-slate-900 text-sm">Process Payout Payment</h4>
+            <p className="text-xs text-slate-500">Enter your payment confirmation code to finalize this payout.</p>
+
+            {/* Audit Preview */}
+            {platformBalance && (() => {
+              const pr = requests.find(r => r.id === processId);
+              const balanceAfter = platformBalance.availableBalance - (pr?.amount || 0);
+              return (
+                <div className="bg-slate-50 rounded-lg p-4 space-y-2 text-xs">
+                  <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Audit Preview</p>
+                  <div className="flex justify-between"><span className="text-slate-500">Available Balance</span><span className={`font-mono font-bold ${platformBalance.availableBalance >= (pr?.amount || 0) ? 'text-emerald-600' : 'text-rose-600'}`}>KES {platformBalance.availableBalance.toLocaleString()}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Payout Amount</span><span className="font-mono font-bold text-slate-900">- KES {(pr?.amount || 0).toLocaleString()}</span></div>
+                  <div className="border-t border-slate-200 pt-2 flex justify-between"><span className="text-slate-700 font-semibold">Balance After</span><span className={`font-mono font-bold ${balanceAfter >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>KES {balanceAfter.toLocaleString()}</span></div>
+                  <div className="flex justify-between text-[10px] text-slate-400 pt-1"><span>Processing Admin</span><span className="font-mono">(authenticated)</span></div>
+                  <div className="flex justify-between text-[10px] text-slate-400"><span>Timestamp</span><span className="font-mono">{new Date().toLocaleString()}</span></div>
+                </div>
+              );
+            })()}
+
+            <div className="space-y-1.5">
+              <label className="block text-[11px] font-bold text-slate-600 uppercase">Payment Confirmation Code</label>
+              <input
+                type="text"
+                required
+                placeholder="Enter confirmation code (e.g. MPESA-123456)"
+                value={confirmationCode}
+                onChange={(e) => setConfirmationCode(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 rounded-lg px-3 py-2.5 text-xs font-mono"
+              />
+              <p className="text-[10px] text-amber-600">This code will be permanently stored in audit logs.</p>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button onClick={() => { setProcessId(null); setConfirmationCode(""); }}
+                className="text-xs font-semibold text-slate-600 px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 transition"
+              >Cancel</button>
+              <button
+                onClick={() => doAction(processId, "process", { confirmationCode: confirmationCode.trim() })}
+                disabled={actionLoading === processId || confirmationCode.trim().length < 3}
+                className="text-xs font-semibold text-white bg-red-600 hover:bg-blue-600 hover:text-white px-4 py-2 rounded-lg transition flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {actionLoading === processId ? <Loader2 className="h-3 w-3 animate-spin" /> : <ArrowRight className="h-3 w-3" />}
+                Confirm & Process Payment
               </button>
             </div>
           </div>

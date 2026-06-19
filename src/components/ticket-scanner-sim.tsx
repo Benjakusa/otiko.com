@@ -264,7 +264,7 @@ export default function TicketScannerSim({ onClose, token }: TicketScannerSimPro
           <p className="text-xs text-slate-500">Point camera at QR code to verify tickets.</p>
         </div>
         <button onClick={onClose}
-          className="text-white bg-black hover:bg-red-600 hover:text-black px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+          className="text-white bg-red-600 hover:bg-blue-600 hover:text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition"
         >
           Close
         </button>
@@ -279,7 +279,7 @@ export default function TicketScannerSim({ onClose, token }: TicketScannerSimPro
             <p className="text-xs text-slate-400 max-w-xs">{cameraError}</p>
             <button
               onClick={startCamera}
-              className="mt-4 bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold px-4 py-2 rounded-xl transition"
+              className="mt-4 bg-red-600 hover:bg-blue-600 hover:text-white text-white text-xs font-bold px-4 py-2 rounded-xl transition"
             >
               Retry Camera
             </button>
@@ -323,7 +323,7 @@ export default function TicketScannerSim({ onClose, token }: TicketScannerSimPro
           {statusCard()}
           <button
             onClick={handleNewScan}
-            className="mt-3 w-full bg-black hover:bg-red-600 hover:text-black text-white font-bold py-3 rounded-xl text-sm transition flex items-center justify-center gap-2"
+            className="mt-3 w-full bg-red-600 hover:bg-blue-600 hover:text-white text-white font-bold py-3 rounded-xl text-sm transition flex items-center justify-center gap-2"
           >
             <Camera className="h-4 w-4" />
             Scan Next Ticket
@@ -409,7 +409,7 @@ function ManualEntryForm({ token, onResult: showResult }: {
       <button
         type="submit"
         disabled={loading || !input.trim()}
-        className="bg-black hover:bg-red-600 hover:text-black text-white text-xs font-bold px-3 py-2 rounded-lg transition disabled:opacity-50"
+        className="bg-red-600 hover:bg-blue-600 hover:text-white text-white text-xs font-bold px-3 py-2 rounded-lg transition disabled:opacity-50"
       >
         {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : "Verify"}
       </button>
