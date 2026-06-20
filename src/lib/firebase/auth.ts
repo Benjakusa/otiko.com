@@ -62,9 +62,6 @@ export const authService = {
       const idToken = await userCred.user.getIdToken();
       return { uid: userCred.user.uid, email: userCred.user.email || email, idToken };
     }
-    if (email === "events@solfest.co.ke") {
-      return { uid: "user-default-uid", email, idToken: "user-default-uid" };
-    }
     throw { code: "auth/user-not-found", message: "No organizer account found with this email." };
   },
 
@@ -80,12 +77,7 @@ export const authService = {
         displayName: userCred.user.displayName || "Google Organizer"
       };
     } else {
-      // Simulator: Sign in with mock Google credentials
-      return {
-        uid: "user-default-uid",
-        email: "events@solfest.co.ke",
-        displayName: "Sol Generational Group"
-      };
+      throw { code: "auth/configuration-not-found", message: "Firebase Auth is not configured." };
     }
   },
 
