@@ -16,7 +16,7 @@ class LedgerEntry(Base):
     
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     organizer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("organizers.id"), index=True)
-    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"), nullable=True)
+    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"), nullable=True, index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"), index=True)
     gross_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     platform_fee: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)

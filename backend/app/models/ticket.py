@@ -16,7 +16,7 @@ class Ticket(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"), index=True)
     event_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("events.id"), index=True)
-    category_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ticket_categories.id"))
+    category_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ticket_categories.id"), index=True)
     ticket_number: Mapped[int] = mapped_column(Integer, nullable=False)  # Sequential per event
     qr_signature: Mapped[str] = mapped_column(String(255), nullable=False)
     pdf_url: Mapped[str] = mapped_column(String(512), nullable=True)

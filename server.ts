@@ -351,6 +351,11 @@ function generateEventCode(): string {
 
 // ---------- SEED DATA ----------
 // ---------- LOAD FROM FIRESTORE ----------
+// NOTE: In-memory arrays (organizers[], events[], orders[], tickets[], etc.)
+// are loaded wholesale at startup and live entirely in RAM. No pagination or
+// server-side filtering — every `.find()` and `.filter()` iterates the full
+// array. This will not scale past ~10K records per entity. Migrate to
+// SQL/Firestore query-based access before production traffic.
 async function loadData() {
   if (firestore) {
     try {
