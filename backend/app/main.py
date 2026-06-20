@@ -33,7 +33,14 @@ app = FastAPI(
 # Enable CORS for frontend asset client domain integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://otiko.com",
+        "https://www.otiko.com",
+        "https://otiko-9e7a9.web.app",
+        "https://otiko-9e7a9.firebaseapp.com",
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -4,6 +4,7 @@ import crypto from "crypto";
 import fs from "fs";
 import multer from "multer";
 import sharp from "sharp";
+import cors from "cors";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import nodemailer from "nodemailer";
 import { createServer as createViteServer } from "vite";
@@ -16,6 +17,16 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
+
+const CORS_ORIGINS = [
+  "https://otiko.com",
+  "https://www.otiko.com",
+  "https://otiko-9e7a9.web.app",
+  "https://otiko-9e7a9.firebaseapp.com",
+  "http://localhost:5173",
+  "http://localhost:3000",
+];
+app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
 
 const TICKET_SECRET = process.env.TICKET_SECRET;
 
