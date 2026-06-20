@@ -11,17 +11,10 @@ from .middleware.rate_limit import limiter
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Lifespan context manager that ensures our database tables 
-    and constraints are bootstrapped in mock/local iterations safely
+    Lifespan context manager — schema migrations are handled by Alembic
+    at deploy time. This only ensures the connection pool is clean.
     """
-    try:
-        async with engine.begin() as conn:
-            # Automatic schema synchronization for local developer comfort
-            await conn.run_sync(Base.metadata.create_all)
-    except Exception as exc:
-        print(f"[Lifespan] Schema bootstrap notice / skip: {exc}")
     yield
-    # Shutdown connection pool
     await engine.dispose()
 
 app = FastAPI(
