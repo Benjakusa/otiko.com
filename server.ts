@@ -5,6 +5,7 @@ import fs from "fs";
 import multer from "multer";
 import sharp from "sharp";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import nodemailer from "nodemailer";
 import { createServer as createViteServer } from "vite";
@@ -27,6 +28,23 @@ const CORS_ORIGINS = [
   "http://localhost:3000",
 ];
 app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
+
+// ---------- RATE LIMITERS ----------
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 10,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: "Too many requests. Please try again later." },
+});
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 30,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: "Too many requests. Please try again later." },
+});
+const publicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 100,
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: "Too many requests. Please try again later." },
+});
 
 const TICKET_SECRET = process.env.TICKET_SECRET;
 
@@ -249,7 +267,7 @@ async function loadData() {
 // ==================== API ENDPOINTS ====================
 
 // --- AUTH & ORGANIZERS ---
-app.post("/api/organizers/register", async (req, res) => {
+app.post("/api/organizers/register", authLimiter, async (req, res) => {
   const { firebaseUid, name, email, phone, businessName, mpesaPayoutNumber } = req.body;
   if (!firebaseUid || !name || !email) {
     return res.status(400).json({ error: "Missing required profile details" });
@@ -338,7 +356,7 @@ app.post("/api/organizers/upload-kyc", upload.single("kycDocument"), async (req,
 });
 
 // --- EVENTS & CATEGORIES ---
-app.get("/api/events", async (req, res) => {
+app.get("/api/events", publicLimiter, async (req, res) => {
   const { status, search } = req.query;
   let filtered = [...events];
 
@@ -365,7 +383,7 @@ app.get("/api/events", async (req, res) => {
   res.json(result);
 });
 
-app.get("/api/events/:code", (req, res) => {
+app.get("/api/events/:code", publicLimiter, (req, res) => {
   const { code } = req.params;
   const evt = events.find(e => e.eventCode === code);
   if (!evt) return res.status(404).json({ error: "Event not found" });
@@ -378,7 +396,7 @@ app.get("/api/events/:code", (req, res) => {
   res.json({ ...evt, categories: cats, minPrice, maxPrice, isSoldOut });
 });
 
-app.post("/api/events", async (req, res) => {
+app.post("/api/events", apiLimiter, async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
 
@@ -494,7 +512,7 @@ app.get("/api/events/:code/tickets", async (req, res) => {
 });
 
 // --- ORDERS & RESERVATIONS (ATOMIC DECREMENT LOGIC) ---
-app.post("/api/orders/reserve", async (req, res) => {
+app.post("/api/orders/reserve", apiLimiter, async (req, res) => {
   const { categoryId, quantity, buyerName, buyerPhone, buyerEmail } = req.body;
   const qty = Number(quantity);
 
@@ -793,7 +811,7 @@ function validateKenyanPhone(phone: string): boolean {
   return /^(254|0)?[17]\d{8}$/.test(phone.replace(/\s+/g, ""));
 }
 
-app.post("/api/wallet/payout-request", async (req, res) => {
+app.post("/api/wallet/payout-request", authLimiter, async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
   if (org.kycStatus !== "verified") {
