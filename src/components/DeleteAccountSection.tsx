@@ -32,7 +32,8 @@ export default function DeleteAccountSection({ token, organizerName, onAccountDe
     try {
       const res = await fetch("/api/organizers/delete-account", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ password }),
       });
       const data = await res.json();

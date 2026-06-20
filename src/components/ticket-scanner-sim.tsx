@@ -92,10 +92,8 @@ export default function TicketScannerSim({ onClose, token }: TicketScannerSimPro
     try {
       const res = await fetch("/api/tickets/verify", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ ticketNumber, verificationCode }),
       });
       const data = await res.json();
@@ -376,7 +374,8 @@ function ManualEntryForm({ token, onResult: showResult }: {
     try {
       const res = await fetch("/api/tickets/verify", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ ticketNumber, verificationCode }),
       });
       const data = await res.json();

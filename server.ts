@@ -12,9 +12,11 @@ import { createServer as createViteServer } from "vite";
 import { initializeApp as initFirebase, cert } from "firebase-admin";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
+import cookieParser from "cookie-parser";
 import { z } from "zod";
 import * as Sentry from "@sentry/node";
 import { Event, TicketCategory, Order, Ticket, LedgerEntry, Payout, PayoutRequest, AuditLog, Organizer } from "./src/types";
+import { initRedis, getRedis, tryReserveTickets, releaseTickets, seedAllCategories, RedisRateLimitStore, redisCache, bustCache, markSessionRevoked, isSessionRevoked, getRedisHealth } from "./redis";
 
 // ---------- STRUCTURED LOGGER ----------
 const log = {
@@ -34,9 +36,8 @@ Sentry.init({
   tracesSampleRate: 1.0,
   enabled: !!process.env.SENTRY_DSN,
 });
-app.use(Sentry.Handlers.requestHandler());
-
 app.use(express.json());
+app.use(cookieParser());
 
 const CORS_ORIGINS = [
   "https://otiko.com",
@@ -52,16 +53,19 @@ app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 10,
   standardHeaders: true, legacyHeaders: false,
+  store: new RedisRateLimitStore(),
   message: { error: "Too many requests. Please try again later." },
 });
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 30,
   standardHeaders: true, legacyHeaders: false,
+  store: new RedisRateLimitStore(),
   message: { error: "Too many requests. Please try again later." },
 });
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 100,
   standardHeaders: true, legacyHeaders: false,
+  store: new RedisRateLimitStore(),
   message: { error: "Too many requests. Please try again later." },
 });
 
@@ -214,11 +218,39 @@ if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
     firestore = getFirestore() as Firestore;
     firebaseAuth = getAuth();
     log.info("[Firebase] Admin SDK initialized successfully");
-    } else {
-      log.error("[Firebase] Admin SDK init failed, running in-memory only:", err);
-    }
-  } else {
+  } catch (err) {
+    log.error("[Firebase] Admin SDK init failed, running in-memory only:", err);
+  }
+} else {
     log.info("[Firebase] No service account found, running in-memory only");
+}
+
+// ---------- REDIS INIT ----------
+initRedis().then(() => {
+  log.info("[Redis] Initialized");
+  seedAllCategories(ticketCategories);
+  runReconciliationSweeper();
+});
+
+// Reconciliation sweeper — runs every 60s, compares Redis vs in-memory counts
+function runReconciliationSweeper() {
+  setInterval(async () => {
+    const redis = getRedis();
+    if (!redis) return;
+    for (const cat of ticketCategories) {
+      const key = `ticket:cat:${cat.id}:remaining`;
+      const redisVal = await redis.get(key).catch(() => null);
+      if (redisVal === null) continue;
+      const redisRemaining = parseInt(redisVal, 10);
+      if (redisRemaining !== cat.remainingQuantity) {
+        const diff = cat.remainingQuantity - redisRemaining;
+        if (diff !== 0) {
+          await redis.incrBy(key, diff).catch(() => {});
+          log.info("[Reconcile] Corrected mismatch for category:", { categoryId: cat.id, inMemory: cat.remainingQuantity, redisWas: redisRemaining, corrected: cat.remainingQuantity });
+        }
+      }
+    }
+  }, 60_000);
 }
 
 // ---------- HELPERS ----------
@@ -267,15 +299,22 @@ async function syncDeleteWhere(collection: string, field: string, value: string)
 
 // ---------- AUTH MIDDLEWARE ----------
 async function getOrganizerByToken(req: express.Request): Promise<Organizer | null> {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-
-  const token = authHeader.split(" ")[1];
+  let token = req.cookies?.token;
+  if (!token) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+    token = authHeader.split(" ")[1];
+  }
 
   // If Firebase Auth is available, verify the JWT
   if (firebaseAuth) {
     try {
       const decoded = await firebaseAuth.verifyIdToken(token);
+      // Redis session revocation check (fail-open)
+      if (await isSessionRevoked(decoded.uid, decoded.iat)) {
+        log.info("[Auth] Session revoked for", { uid: decoded.uid });
+        return null;
+      }
       return organizers.find(o => o.firebaseUid === decoded.uid) || null;
     } catch (err) {
       log.warn("[Auth] verifyIdToken failed:", { message: (err as Error).message });
@@ -293,11 +332,13 @@ async function getOrganizerByToken(req: express.Request): Promise<Organizer | nu
 
 // Sync version for endpoints that don't need async
 function getOrganizerByTokenSync(req: express.Request): Organizer | null {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-
-  const token = authHeader.split(" ")[1];
-  // DEMO MODE: direct UID matching — only enabled when ALLOW_DEMO_AUTH=true
+  let token = req.cookies?.token;
+  if (!token) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+    token = authHeader.split(" ")[1];
+  }
+  // This sync version only works in DEMO MODE (no Firebase verify)
   if (process.env.ALLOW_DEMO_AUTH === "true" && !token.startsWith("eyJ")) {
     return organizers.find(o => o.firebaseUid === token) || null;
   }
@@ -406,6 +447,49 @@ async function loadData() {
 }
 
 // ==================== API ENDPOINTS ====================
+
+// --- SESSION MANAGEMENT (httpOnly cookie auth) ---
+const SESSION_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
+
+app.post("/api/auth/session", async (req, res) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken || typeof idToken !== "string") {
+      return res.status(400).json({ error: "idToken is required" });
+    }
+    if (!firebaseAuth) {
+      return res.status(503).json({ error: "Firebase auth not available" });
+    }
+    const decoded = await firebaseAuth.verifyIdToken(idToken);
+    res.cookie("token", idToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      maxAge: SESSION_MAX_AGE,
+      path: "/",
+    });
+    res.json({ uid: decoded.uid, expiresIn: SESSION_MAX_AGE });
+  } catch (err) {
+    log.error("[Auth] Session creation failed:", err);
+    res.status(401).json({ error: "Invalid token" });
+  }
+});
+
+app.post("/api/auth/logout", async (req, res) => {
+  const token = req.cookies?.token;
+  res.clearCookie("token", { path: "/" });
+  if (token && firebaseAuth) {
+    try {
+      const decoded = await firebaseAuth.verifyIdToken(token);
+      await firebaseAuth.revokeRefreshTokens(decoded.uid);
+      await markSessionRevoked(decoded.uid, decoded.iat, decoded.exp);
+      log.info("[Auth] Tokens revoked for", { uid: decoded.uid });
+    } catch {
+      // Token already expired or invalid — clear cookie is sufficient
+    }
+  }
+  res.json({ success: true });
+});
 
 // --- AUTH & ORGANIZERS ---
 app.post("/api/organizers/register", authLimiter, validate(schemas.registerOrganizer), async (req, res) => {
@@ -522,7 +606,7 @@ app.get("/api/events", publicLimiter, async (req, res) => {
   res.json(result);
 });
 
-app.get("/api/events/:code", publicLimiter, (req, res) => {
+app.get("/api/events/:code", publicLimiter, redisCache(30), (req, res) => {
   const { code } = req.params;
   const evt = events.find(e => e.eventCode === code);
   if (!evt) return res.status(404).json({ error: "Event not found" });
@@ -587,6 +671,7 @@ app.patch("/api/events/:code", validate(schemas.updateEvent), async (req, res) =
     evt.updatedAt = new Date().toISOString();
 
     await syncUpdate("events", evt.id, { name: evt.name, flyerUrl: evt.flyerUrl, eventDate: evt.eventDate, venue: evt.venue, description: evt.description, status: evt.status, updatedAt: evt.updatedAt });
+    bustCache(`/api/events/${code}`).catch(() => {});
     res.json(evt);
   } catch (err) {
     log.error("Failed to update event:", err);
@@ -615,6 +700,7 @@ app.delete("/api/events/:code", async (req, res) => {
   evt.status = "cancelled";
   evt.updatedAt = new Date().toISOString();
 
+  bustCache(`/api/events/${code}`).catch(() => {});
   res.json({ success: true, message: "Event cancelled successfully.", event: evt });
 });
 
@@ -652,7 +738,7 @@ app.get("/api/events/:code/tickets", async (req, res) => {
   res.json(eventTickets);
 });
 
-// --- ORDERS & RESERVATIONS (ATOMIC DECREMENT LOGIC) ---
+// --- ORDERS & RESERVATIONS (ATOMIC REDIS DECR) ---
 app.post("/api/orders/reserve", apiLimiter, validate(schemas.reserveOrder), async (req, res) => {
   const { categoryId, quantity: qty, buyerName, buyerPhone, buyerEmail } = req.body;
 
@@ -663,10 +749,34 @@ app.post("/api/orders/reserve", apiLimiter, validate(schemas.reserveOrder), asyn
   const evt = events.find(e => e.id === category.eventId);
   if (!evt || evt.status !== "active") return res.status(400).json({ error: "This event is not actively accepting reservations" });
   if (new Date(evt.eventDate).getTime() < Date.now()) return res.status(400).json({ error: "This event date has already passed" });
-  if (category.remainingQuantity < qty) return res.status(409).json({ error: "NOT_ENOUGH_TICKETS", message: "Requested ticket count exceeds remaining category tickets." });
 
-  category.remainingQuantity -= qty;
-  await syncUpdate("ticketCategories", category.id, { remainingQuantity: category.remainingQuantity });
+  // --- Phase A: Atomic reservation via Redis ---
+  const redis = getRedis();
+
+  if (redis) {
+    // Primary path: Redis Lua script for atomic check-and-decrement
+    const result = await tryReserveTickets(categoryId, qty);
+    if (!result.ok) {
+      const reason = (result as { ok: false; reason: string }).reason;
+      if (reason === "NOT_ENOUGH_TICKETS") {
+        return res.status(409).json({ error: "NOT_ENOUGH_TICKETS", message: "Requested ticket count exceeds remaining category tickets." });
+      }
+      return res.status(503).json({ error: "Reservation service unavailable" });
+    }
+    // Redis decrement succeeded — update in-memory count for consistency
+    category.remainingQuantity = Math.max(0, result.remaining);
+  } else {
+    // Fallback: in-memory check (safe for single instance, NOT safe horizontally scaled)
+    if (category.remainingQuantity < qty) {
+      return res.status(409).json({ error: "NOT_ENOUGH_TICKETS", message: "Requested ticket count exceeds remaining category tickets." });
+    }
+    category.remainingQuantity -= qty;
+  }
+
+  // Durable write to Firestore (best-effort — reconciled by sweeper if it fails)
+  await syncUpdate("ticketCategories", category.id, { remainingQuantity: category.remainingQuantity }).catch((err: any) => {
+    log.warn("[Reservation] Firestore sync failed, will reconcile:", err?.message);
+  });
 
   const totalAmount = category.price * qty;
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
@@ -679,8 +789,11 @@ app.post("/api/orders/reserve", apiLimiter, validate(schemas.reserveOrder), asyn
   };
 
   orders.push(newOrder);
-  await syncSet("orders", newOrder.id, newOrder);
+  await syncSet("orders", newOrder.id, newOrder).catch((err: any) => {
+    log.warn("[Reservation] Order Firestore sync failed:", err?.message);
+  });
 
+  // Sweeper: release on expiry
   setTimeout(async () => {
     const latestOrder = orders.find(o => o.id === newOrder.id);
     if (latestOrder && latestOrder.status === "pending") {
@@ -688,10 +801,11 @@ app.post("/api/orders/reserve", apiLimiter, validate(schemas.reserveOrder), asyn
       const cat = ticketCategories.find(c => c.id === latestOrder.categoryId);
       if (cat) {
         cat.remainingQuantity += latestOrder.quantity;
-        await syncUpdate("ticketCategories", cat.id, { remainingQuantity: cat.remainingQuantity });
+        await syncUpdate("ticketCategories", cat.id, { remainingQuantity: cat.remainingQuantity }).catch(() => {});
       }
-      await syncUpdate("orders", latestOrder.id, { status: "expired" });
-      log.info(`[Sweeper] Order ${latestOrder.id} expired, tickets released.`);
+      if (redis) await releaseTickets(latestOrder.categoryId, latestOrder.quantity);
+      await syncUpdate("orders", latestOrder.id, { status: "expired" }).catch(() => {});
+      log.info("[Sweeper] Order expired, tickets released:", { orderId: latestOrder.id });
     }
   }, 5 * 60 * 1000);
 
@@ -762,6 +876,18 @@ async function triggerSimulatedCallback(payload: any) {
   const order = orders.find(o => o.mpesaCheckoutRequestId === CheckoutRequestID);
   if (!order) { log.error(`[M-Pesa] Unknown callback: ${CheckoutRequestID}`); return; }
   if (order.status !== "pending") { log.info(`[M-Pesa] Already processed: ${order.id}`); return; }
+
+  // Redis SET NX idempotency lock for the simulated callback path
+  const redisMpesa = getRedis();
+  if (redisMpesa) {
+    const lockKey = `mpesa:processed:${CheckoutRequestID}`;
+    try {
+      const locked = await redisMpesa.set(lockKey, "1", { NX: true, EX: 86400 });
+      if (!locked) { log.info(`[M-Pesa] Redis lock prevented re-process: ${CheckoutRequestID}`); return; }
+    } catch {
+      // Redis unavailable — fall through, in-memory status check is sufficient
+    }
+  }
 
   if (ResultCode === 0) {
     order.status = "paid";
@@ -1565,12 +1691,35 @@ app.get("/health", (req, res) => {
 });
 
 // ---------- SENTRY ERROR HANDLER ----------
-app.use(Sentry.Handlers.errorHandler());
+Sentry.setupExpressErrorHandler(app);
 
 // ---------- GLOBAL ERROR HANDLER ----------
 app.use((err: any, req: any, res: any, next: any) => {
   log.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal server error" });
+});
+
+// ==================== HEALTH ENDPOINT ====================
+app.get("/health", (req, res) => {
+  const redisHealth = getRedisHealth();
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    redis: {
+      configured: redisHealth.url !== "(not configured)",
+      connected: redisHealth.connected,
+    },
+    env: {
+      node: process.version,
+      sentry: !!process.env.SENTRY_DSN,
+      firebase: !!process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+      smtp: !!process.env.SMTP_HOST,
+      adminEmail: !!process.env.ADMIN_EMAIL,
+      ticketSecret: !!process.env.TICKET_SECRET,
+      demoAuth: process.env.ALLOW_DEMO_AUTH === "true",
+    },
+  });
 });
 
 // ==================== VITE MIDDLEWARE ====================

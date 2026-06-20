@@ -50,6 +50,7 @@ export const authService = {
     if (isFirebaseProxyActive && realAuth) {
       const userCred = await fbCreateUser(realAuth, email, password);
       const idToken = await userCred.user.getIdToken();
+      await fetch("/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken }), credentials: "include" });
       return { uid: userCred.user.uid, email: userCred.user.email || email, idToken };
     }
     const uid = `sim-uid-${Math.random().toString(36).substring(2, 11)}`;
@@ -60,21 +61,25 @@ export const authService = {
     if (isFirebaseProxyActive && realAuth) {
       const userCred = await fbSignIn(realAuth, email, password);
       const idToken = await userCred.user.getIdToken();
+      // Establish httpOnly session cookie
+      await fetch("/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken }), credentials: "include" });
       return { uid: userCred.user.uid, email: userCred.user.email || email, idToken };
     }
     throw { code: "auth/user-not-found", message: "No organizer account found with this email." };
   },
 
-  signInWithGoogle: async (): Promise<{ uid: string; email: string; displayName: string }> => {
+  signInWithGoogle: async (): Promise<{ uid: string; email: string; displayName: string; idToken: string }> => {
     if (isFirebaseProxyActive && realAuth) {
       const provider = new GoogleAuthProvider();
-      // Enforce custom parameters to ensure prompt selection
       provider.setCustomParameters({ prompt: "select_account" });
       const userCred = await signInWithPopup(realAuth, provider);
+      const idToken = await userCred.user.getIdToken();
+      await fetch("/api/auth/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken }), credentials: "include" });
       return {
         uid: userCred.user.uid,
         email: userCred.user.email || "",
-        displayName: userCred.user.displayName || "Google Organizer"
+        displayName: userCred.user.displayName || "Google Organizer",
+        idToken
       };
     } else {
       throw { code: "auth/configuration-not-found", message: "Firebase Auth is not configured." };

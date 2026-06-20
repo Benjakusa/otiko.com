@@ -133,10 +133,10 @@ function OverviewSection({ token }: { token: string }) {
     setLoading(true);
     try {
       const [orgRes, evtRes, tktRes, payRes] = await Promise.all([
-        fetch("/api/admin/organizers", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/admin/events", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/admin/tickets", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/admin/payout-requests", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/admin/organizers", { credentials: "include", headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/admin/events", { credentials: "include", headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/admin/tickets", { credentials: "include", headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/admin/payout-requests", { credentials: "include", headers: { Authorization: `Bearer ${token}` } }),
       ]);
       const organizers: Organizer[] = orgRes.ok ? await orgRes.json() : [];
       const events: Event[] = evtRes.ok ? await evtRes.json() : [];
@@ -198,7 +198,7 @@ function OrganizersSection({ token }: { token: string }) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/organizers", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/admin/organizers", { credentials: "include", headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) setOrganizers(await res.json());
     } catch { /* ignore */ }
     finally { setLoading(false); }
@@ -208,7 +208,7 @@ function OrganizersSection({ token }: { token: string }) {
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this organizer? This cannot be undone.")) return;
-    const res = await fetch(`/api/admin/organizers/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(`/api/admin/organizers/${id}`, { method: "DELETE", credentials: "include", headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) fetchData();
     else alert("Failed to delete");
   };
@@ -295,7 +295,7 @@ function VerificationSection({ token }: { token: string }) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/organizers", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/admin/organizers", { credentials: "include", headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
         const all: Organizer[] = await res.json();
         setOrganizers(all.filter(o => o.kycStatus === "pending"));
@@ -310,6 +310,7 @@ function VerificationSection({ token }: { token: string }) {
     const res = await fetch(`/api/admin/organizers/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      credentials: "include",
       body: JSON.stringify({ kycStatus }),
     });
     if (res.ok) fetchData();
@@ -395,7 +396,7 @@ function EventsSection({ token }: { token: string }) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/events", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/admin/events", { credentials: "include", headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) setEvents(await res.json());
     } catch { /* ignore */ }
     finally { setLoading(false); }
@@ -404,18 +405,19 @@ function EventsSection({ token }: { token: string }) {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const updateStatus = async (id: string, status: string) => {
-    const res = await fetch(`/api/admin/events/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ status }),
-    });
+      const res = await fetch(`/api/admin/events/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        credentials: "include",
+        body: JSON.stringify({ status })
+      });
     if (res.ok) fetchData();
     else { const d = await res.json(); alert(d.error || "Failed"); }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this event permanently?")) return;
-    const res = await fetch(`/api/admin/events/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(`/api/admin/events/${id}`, { method: "DELETE", credentials: "include", headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) fetchData();
     else alert("Failed to delete");
   };
@@ -508,13 +510,20 @@ function TicketsSection({ token }: { token: string }) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/tickets", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/admin/tickets", { credentials: "include", headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) setTickets(await res.json());
     } catch { /* ignore */ }
     finally { setLoading(false); }
   }, [token]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this ticket? This cannot be undone.")) return;
+    const res = await fetch(`/api/admin/tickets/${id}`, { method: "DELETE", credentials: "include", headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) fetchData();
+    else alert("Failed to delete ticket");
+  };
 
   const filtered = tickets.filter(t =>
     String(t.ticketNumber ?? "").toLowerCase().includes(search.toLowerCase()) ||
@@ -552,6 +561,7 @@ function TicketsSection({ token }: { token: string }) {
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Issued</th>
                   <th className="py-3 px-4">Used</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -565,6 +575,12 @@ function TicketsSection({ token }: { token: string }) {
                     </td>
                     <td className="py-3 px-4 text-slate-400">{t.issuedAt ? new Date(t.issuedAt).toLocaleDateString() : "-"}</td>
                     <td className="py-3 px-4 text-slate-400">{t.usedAt ? new Date(t.usedAt).toLocaleDateString() : "-"}</td>
+                    <td className="py-3 px-4 text-right">
+                      <button onClick={() => handleDelete(t.id)}
+                        className="text-rose-500 hover:text-rose-700 p-1 transition"
+                        title="Delete ticket"
+                      ><Trash2 className="h-3.5 w-3.5" /></button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -594,7 +610,7 @@ function PayoutsSection({ token }: { token: string }) {
     setLoading(true);
     try {
       const url = filter ? `/api/admin/payout-requests?status=${filter}` : "/api/admin/payout-requests";
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(url, { credentials: "include", headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
         const data = await res.json();
         setRequests(data.requests || []);
@@ -611,6 +627,7 @@ function PayoutsSection({ token }: { token: string }) {
     try {
       const res = await fetch(`/api/admin/payout-requests/${id}/${action}`, {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        credentials: "include",
         body: body ? JSON.stringify(body) : undefined,
       });
       if (res.ok) {
@@ -856,7 +873,7 @@ function UsersSection({ token }: { token: string }) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/organizers", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/admin/organizers", { credentials: "include", headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) setOrganizers(await res.json());
     } catch { /* ignore */ }
     finally { setLoading(false); }
@@ -968,7 +985,7 @@ function AuditSection({ token }: { token: string }) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/audit-logs", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/admin/audit-logs", { credentials: "include", headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) setLogs(await res.json());
     } catch { /* ignore */ }
     finally { setLoading(false); }

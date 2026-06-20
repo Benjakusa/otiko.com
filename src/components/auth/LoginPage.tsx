@@ -41,11 +41,7 @@ export default function LoginPage({
       const user = await authService.signIn(data.email, data.password);
 
       // 2. Load Organizer profile details from Otiko backend system
-      const res = await fetch("/api/organizers/me", {
-        headers: {
-          "Authorization": `Bearer ${user.idToken}`
-        }
-      });
+      const res = await fetch("/api/organizers/me", { credentials: "include" });
 
       if (!res.ok) {
         throw new Error("Local profile registration mismatch on Otiko cloud.");
@@ -75,22 +71,16 @@ export default function LoginPage({
       const user = await authService.signInWithGoogle();
 
       // Attempt to load organizer profile, or auto-create if not found
-      let orgRes = await fetch("/api/organizers/me", {
-        headers: {
-          "Authorization": `Bearer ${user.uid}`
-        }
-      });
+      let orgRes = await fetch("/api/organizers/me", { credentials: "include" });
 
       let organizerData;
       if (orgRes.ok) {
         organizerData = await orgRes.json();
       } else {
-        // Auto-register google user who is logging in for the first time
         const regRes = await fetch("/api/organizers/register", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify({
             firebaseUid: user.uid,
             name: user.displayName,
@@ -107,7 +97,7 @@ export default function LoginPage({
         organizerData = await regRes.json();
       }
 
-      onLoginSuccess(organizerData, user.uid);
+      onLoginSuccess(organizerData, user.idToken);
     } catch (err: any) {
       console.error("Google login failed:", err);
       if (err.code === "auth/configuration-not-found" || (err.message && err.message.includes("configuration-not-found"))) {

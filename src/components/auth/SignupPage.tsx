@@ -120,7 +120,7 @@ export default function SignupPage({
       }
 
       const freshOrganizer = await registerRes.json();
-      onSignupSuccess(freshOrganizer, "");
+      onSignupSuccess(freshOrganizer, user.idToken);
     } catch (err: any) {
       console.error("Google login failed:", err);
       if (err.code === "auth/configuration-not-found" || (err.message && err.message.includes("configuration-not-found"))) {

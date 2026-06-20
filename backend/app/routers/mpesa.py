@@ -126,15 +126,19 @@ async def mpesa_callback(
         
     if not checkout_id:
         return {"ResultCode": 1, "ResultDesc": "Invalid payload: CheckoutRequestID is missing"}
-        
-    # 2. Idempotency check using Redis cache
+
+    # 2. Atomic idempotency lock via Redis SET NX + TTL.
+    #    This runs BEFORE any DB read so retries are blocked at the Redis layer,
+    #    eliminating the TOCTOU race of the old GET-then-SETEX pattern.
     cache_key = f"mpesa:processed:{checkout_id}"
     try:
-        is_processed = await redis.get(cache_key)
-        if is_processed:
+        locked = await redis.set(cache_key, "1", nx=True, ex=86400)
+        if not locked:
             return {"ResultCode": 0, "ResultDesc": "Already processed"}
     except Exception as exc:
-        logger.error("MpesaCallback Redis get error", exc_info=exc)
+        logger.error("MpesaCallback Redis NX error", exc_info=exc)
+        # If Redis is down, fall through — the order-status check (step 4)
+        # provides a second layer of defense against double-processing.
 
     # 3. Retrieve matching Order record
     result = await db.execute(
@@ -197,10 +201,4 @@ async def mpesa_callback(
         await db.execute(stmt)
         await db.commit()
 
-    # 6. Set Redis TTL flag
-    try:
-        await redis.setex(cache_key, 86400, "1")  # 24 hour TTL protection
-    except Exception as exc:
-        logger.error("MpesaCallback Redis set processed warning", exc_info=exc)
-        
     return {"ResultCode": 0, "ResultDesc": "Success callback handled correctly"}

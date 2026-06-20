@@ -36,25 +36,17 @@ export default function App() {
     setMobileSidebarOpen(false);
   }, [activeTab]);
 
-  // Authentication Token State
-  const [token, setToken] = useState<string>(() => {
-    return localStorage.getItem("otiko_auth_token") || "";
-  });
-
-  useEffect(() => {
-    localStorage.setItem("otiko_auth_token", token);
-  }, [token]);
+  // Authentication state — token kept in memory; httpOnly cookie handles API auth
+  const [token, setToken] = useState<string>("");
 
   // Admin login is unified with the organizer login page — role field determines redirect
 
   // Guard: redirect unauthenticated users to login when accessing restricted tabs
   const restrictedTabs = ["dashboard", "events", "wallet", "kyc", "scanner", "admin", "settings"];
   useEffect(() => {
-    if (restrictedTabs.includes(activeTab) && (!token || token === "user-default-uid")) {
+    if (restrictedTabs.includes(activeTab) && !token) {
       const checkAuth = async () => {
-        const res = await fetch("/api/organizers/me", {
-          headers: { "Authorization": `Bearer ${token}` }
-        });
+        const res = await fetch("/api/organizers/me", { credentials: "include" });
         if (!res.ok) {
           setActiveTab("login");
         }
@@ -163,9 +155,7 @@ export default function App() {
       }
 
       // 2. Fetch organizer
-      const orgRes = await fetch("/api/organizers/me", {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
+      const orgRes = await fetch("/api/organizers/me", { credentials: "include" });
       if (orgRes.ok) {
         const orgData = await orgRes.json();
         setOrganizer(orgData);
@@ -174,9 +164,7 @@ export default function App() {
       }
 
       // 3. Fetch wallet/finance metrics
-      const walletRes = await fetch("/api/wallet/overview", {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
+      const walletRes = await fetch("/api/wallet/overview", { credentials: "include" });
       if (walletRes.ok) {
         const walletData = await walletRes.json();
         setWalletOverview(walletData);
@@ -2410,10 +2398,10 @@ export default function App() {
               <DeleteAccountSection
                 token={token}
                 organizerName={organizer?.name || ""}
-                onAccountDeleted={() => {
+                onAccountDeleted={async () => {
+                  await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
                   setOrganizer(null);
                   setToken("");
-                  localStorage.removeItem("otiko_auth_token");
                   setActiveTab("public");
                 }}
               />
@@ -2427,7 +2415,7 @@ export default function App() {
 
           {/* ==================================== TAB: ADMIN DASHBOARD ==================================== */}
           {activeTab === "admin" && (
-            <AdminDashboard token={token} organizer={organizer} onLogout={() => { setOrganizer(null); setToken(""); localStorage.removeItem("otiko_auth_token"); setActiveTab("public"); }} />
+            <AdminDashboard token={token} organizer={organizer} onLogout={async () => { await fetch("/api/auth/logout", { method: "POST", credentials: "include" }); setOrganizer(null); setToken(""); setActiveTab("public"); }} />
           )}
 
         </div>
