@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 import uuid
@@ -6,12 +7,15 @@ import uuid
 from ..schemas import OrganizerResponse, KYCUploadRequest, OrganizerRegisterRequest
 from ..dependencies import get_current_organizer, get_db
 from ..models.organizer import Organizer, KYCStatus
+from ..middleware.rate_limit import limiter
 
 router = APIRouter()
 
 @router.post("/signup", response_model=OrganizerResponse)
+@limiter.limit("5/minute")
 async def signup_organizer(
-    request: OrganizerRegisterRequest,
+    fast_req: Request,
+    body: OrganizerRegisterRequest,
     current_org: Organizer = Depends(get_current_organizer),
     db: AsyncSession = Depends(get_db)
 ):
@@ -20,10 +24,10 @@ async def signup_organizer(
         update(Organizer)
         .where(Organizer.id == current_org.id)
         .values(
-            name=request.name,
-            email=request.email,
-            business_name=request.business_name,
-            mpesa_payout_number=request.mpesa_payout_number
+            name=body.name,
+            email=body.email,
+            business_name=body.business_name,
+            mpesa_payout_number=body.mpesa_payout_number
         )
     )
     await db.execute(stmt)
@@ -35,15 +39,19 @@ async def signup_organizer(
     return res.scalar_one()
 
 @router.get("/me", response_model=OrganizerResponse)
+@limiter.limit("30/minute")
 async def get_profile(
+    fast_req: Request,
     current_org: Organizer = Depends(get_current_organizer)
 ):
     """Returns the organizer workspace details"""
     return current_org
 
 @router.post("/upload-kyc", response_model=OrganizerResponse)
+@limiter.limit("5/minute")
 async def upload_kyc(
-    request: KYCUploadRequest,
+    fast_req: Request,
+    body: KYCUploadRequest,
     current_org: Organizer = Depends(get_current_organizer),
     db: AsyncSession = Depends(get_db)
 ):
@@ -52,8 +60,8 @@ async def upload_kyc(
         update(Organizer)
         .where(Organizer.id == current_org.id)
         .values(
-            business_name=request.business_name,
-            mpesa_payout_number=request.mpesa_payout_number,
+            business_name=body.business_name,
+            mpesa_payout_number=body.mpesa_payout_number,
             kyc_status=KYCStatus.VERIFIED  # Sandbox flow automatically verifies for fast iteration
         )
     )
