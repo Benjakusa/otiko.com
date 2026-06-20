@@ -1,4 +1,9 @@
+import os
+import logging
+import sentry_sdk
 from fastapi import FastAPI, Depends
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from slowapi import _rate_limit_exceeded_handler
@@ -7,6 +12,12 @@ from slowapi.errors import RateLimitExceeded
 from .database import engine, Base
 from .routers import api_router
 from .middleware.rate_limit import limiter
+
+sentry_sdk.init(
+    dsn=os.environ.get("SENTRY_DSN", ""),
+    traces_sample_rate=1.0,
+    profiles_sample_rate=1.0,
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

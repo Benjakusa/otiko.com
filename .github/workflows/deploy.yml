@@ -45,15 +45,23 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
       
-      - name: Build Backend Docker Image
+      - name: Build Backend Docker Image (SHA-tagged)
         run: |
-          docker build -t gcr.io/otiko-production/backend:latest ./backend
+          SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          docker build -t gcr.io/otiko-production/backend:$SHA ./backend
+          docker tag gcr.io/otiko-production/backend:$SHA gcr.io/otiko-production/backend:latest
+          docker push gcr.io/otiko-production/backend:$SHA
           docker push gcr.io/otiko-production/backend:latest
       
-      - name: Deploy Backend to Cloud Run
+      - name: Run Database Migrations (alembic upgrade head)
         run: |
+          docker run --rm gcr.io/otiko-production/backend:latest alembic upgrade head
+      
+      - name: Deploy Backend to Cloud Run (SHA-tagged)
+        run: |
+          SHA=$(echo ${{ github.sha }} | cut -c1-7)
           gcloud run deploy otiko-backend \
-            --image gcr.io/otiko-production/backend:latest \
+            --image gcr.io/otiko-production/backend:$SHA \
             --platform managed \
             --region us-central1 \
             --allow-unauthenticated \
@@ -61,10 +69,6 @@ jobs:
             --cpu 2 \
             --concurrency 80 \
             --max-instances 100
-      
-      - name: Run Database Migrations
-        run: |
-          gcloud run jobs execute otiko-migrations --wait
       
       - name: Deploy Celery Workers
         run: |
@@ -84,3 +88,20 @@ jobs:
           cd frontend-admin
           npm run build
           firebase deploy --only hosting:otiko-admin
+
+  notify-failure:
+    needs: [test, deploy]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify on workflow failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue?.number || 1,
+              body: `## ❌ Workflow Failed\n**Workflow:** ${context.workflow}\n**Branch:** ${context.ref}\n**Commit:** ${context.sha}\n**Run:** ${runUrl}`
+            });

@@ -13,10 +13,28 @@ import { initializeApp as initFirebase, cert } from "firebase-admin";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { z } from "zod";
+import * as Sentry from "@sentry/node";
 import { Event, TicketCategory, Order, Ticket, LedgerEntry, Payout, PayoutRequest, AuditLog, Organizer } from "./src/types";
+
+// ---------- STRUCTURED LOGGER ----------
+const log = {
+  info: (msg: string, meta?: any) => console.log(JSON.stringify({ t: new Date().toISOString(), level: "info", msg, ...meta })),
+  warn: (msg: string, meta?: any) => console.warn(JSON.stringify({ t: new Date().toISOString(), level: "warn", msg, ...meta })),
+  error: (msg: string, err?: any, meta?: any) => {
+    console.error(JSON.stringify({ t: new Date().toISOString(), level: "error", msg, error: err?.message || String(err), stack: err?.stack, ...meta }));
+    if (process.env.SENTRY_DSN && err) Sentry.captureException(err);
+  },
+};
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN || "",
+  tracesSampleRate: 1.0,
+  enabled: !!process.env.SENTRY_DSN,
+});
+app.use(Sentry.Handlers.requestHandler());
 
 app.use(express.json());
 
@@ -195,12 +213,12 @@ if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
     initFirebase({ credential: cert(serviceAccount) });
     firestore = getFirestore() as Firestore;
     firebaseAuth = getAuth();
-    console.log("[Firebase] Admin SDK initialized successfully");
-  } catch (err) {
-    console.error("[Firebase] Admin SDK init failed, running in-memory only:", err);
-  }
-} else {
-  console.log("[Firebase] No service account found, running in-memory only");
+    log.info("[Firebase] Admin SDK initialized successfully");
+    } else {
+      log.error("[Firebase] Admin SDK init failed, running in-memory only:", err);
+    }
+  } else {
+    log.info("[Firebase] No service account found, running in-memory only");
 }
 
 // ---------- HELPERS ----------
@@ -211,28 +229,28 @@ function docId(): string {
 async function syncSet(collection: string, id: string, data: any) {
   if (firestore) {
     try { await firestore.collection(collection).doc(id).set(data); }
-    catch (e) { console.error(`[Firestore] Error writing ${collection}/${id}:`, e); }
+    catch (e) { log.error(`[Firestore] Error writing ${collection}/${id}:`, e); }
   }
 }
 
 async function syncUpdate(collection: string, id: string, data: any) {
   if (firestore) {
     try { await firestore.collection(collection).doc(id).update(data); }
-    catch (e) { console.error(`[Firestore] Error updating ${collection}/${id}:`, e); }
+    catch (e) { log.error(`[Firestore] Error updating ${collection}/${id}:`, e); }
   }
 }
 
 async function syncDelete(collection: string, id: string) {
   if (firestore) {
     try { await firestore.collection(collection).doc(id).delete(); }
-    catch (e) { console.error(`[Firestore] Error deleting ${collection}/${id}:`, e); }
+    catch (e) { log.error(`[Firestore] Error deleting ${collection}/${id}:`, e); }
   }
 }
 
 async function syncAdd(collection: string, data: any) {
   if (firestore) {
     try { await firestore.collection(collection).add(data); }
-    catch (e) { console.error(`[Firestore] Error adding to ${collection}:`, e); }
+    catch (e) { log.error(`[Firestore] Error adding to ${collection}:`, e); }
   }
 }
 
@@ -243,7 +261,7 @@ async function syncDeleteWhere(collection: string, field: string, value: string)
       const batch = firestore.batch();
       snap.docs.forEach(doc => batch.delete(doc.ref));
       await batch.commit();
-    } catch (e) { console.error(`[Firestore] Error batch deleting ${collection}:`, e); }
+    } catch (e) { log.error(`[Firestore] Error batch deleting ${collection}:`, e); }
   }
 }
 
@@ -260,7 +278,7 @@ async function getOrganizerByToken(req: express.Request): Promise<Organizer | nu
       const decoded = await firebaseAuth.verifyIdToken(token);
       return organizers.find(o => o.firebaseUid === decoded.uid) || null;
     } catch (err) {
-      console.warn("[Auth] verifyIdToken failed:", (err as Error).message);
+      log.warn("[Auth] verifyIdToken failed:", { message: (err as Error).message });
       return null;
     }
   }
@@ -307,18 +325,18 @@ if (smtpHost && smtpUser) {
       host: smtpHost, port: smtpPort, secure: smtpPort === 465,
       auth: { user: smtpUser, pass: smtpPass }
     });
-    console.log("[Email] SMTP transporter initialized");
-  } catch (e) { console.error("[Email] Failed to init SMTP:", e); }
+    log.info("[Email] SMTP transporter initialized");
+  } catch (e) { log.error("[Email] Failed to init SMTP:", e); }
 } else {
-  console.log("[Email] No SMTP config, emails will be logged to console");
+  log.info("[Email] No SMTP config, emails will be logged to console");
 }
 
 async function sendEmail(to: string, subject: string, html: string) {
   if (mailTransporter) {
     try { await mailTransporter.sendMail({ from: emailFrom, to, subject, html }); }
-    catch (e) { console.error(`[Email] Failed to send "${subject}":`, e); }
+    catch (e) { log.error(`[Email] Failed to send "${subject}":`, e); }
   }
-  console.log(`[Email] [${subject}] To: ${to} — ${html.replace(/<[^>]*>/g, "").slice(0, 200)}`);
+  log.info(`[Email] [${subject}] To: ${to} — ${html.replace(/<[^>]*>/g, "").slice(0, 200)}`);
 }
 
 // ---------- AUDIT LOG ----------
@@ -376,15 +394,15 @@ async function loadData() {
         payouts = paySnap.docs.map(d => ({ id: d.id, ...d.data() } as Payout));
         const prSnap = await firestore.collection("payoutRequests").get();
         payoutRequests = prSnap.docs.map(d => ({ id: d.id, ...d.data() } as PayoutRequest));
-        console.log(`[Firestore] Loaded ${organizers.length} organizers, ${events.length} events, ${orders.length} orders, ${payoutRequests.length} payout requests`);
+        log.info(`[Firestore] Loaded ${organizers.length} organizers, ${events.length} events, ${orders.length} orders, ${payoutRequests.length} payout requests`);
         return;
       }
     } catch (e) {
-      console.error("[Firestore] Error loading data:", e);
+      log.error("[Firestore] Error loading data:", e);
     }
   }
 
-  console.log("[Server] No seed data — awaiting organizer-created events");
+  log.info("[Server] No seed data — awaiting organizer-created events");
 }
 
 // ==================== API ENDPOINTS ====================
@@ -464,7 +482,7 @@ app.post("/api/organizers/upload-kyc", upload.single("kycDocument"), validate(sc
         fs.writeFileSync(req.file.path, compressedBytes);
       }
     } catch (pdfErr) {
-      console.warn("[KYC] PDF compression skipped:", (pdfErr as Error).message);
+      log.warn("[KYC] PDF compression skipped:", (pdfErr as Error).message);
     }
     kycDocUrl = `/uploads/${req.file.filename}`;
   }
@@ -571,7 +589,7 @@ app.patch("/api/events/:code", validate(schemas.updateEvent), async (req, res) =
     await syncUpdate("events", evt.id, { name: evt.name, flyerUrl: evt.flyerUrl, eventDate: evt.eventDate, venue: evt.venue, description: evt.description, status: evt.status, updatedAt: evt.updatedAt });
     res.json(evt);
   } catch (err) {
-    console.error("Failed to update event:", err);
+    log.error("Failed to update event:", err);
     res.status(500).json({ error: "Failed to update event" });
   }
 });
@@ -673,7 +691,7 @@ app.post("/api/orders/reserve", apiLimiter, validate(schemas.reserveOrder), asyn
         await syncUpdate("ticketCategories", cat.id, { remainingQuantity: cat.remainingQuantity });
       }
       await syncUpdate("orders", latestOrder.id, { status: "expired" });
-      console.log(`[Sweeper] Order ${latestOrder.id} expired, tickets released.`);
+      log.info(`[Sweeper] Order ${latestOrder.id} expired, tickets released.`);
     }
   }, 5 * 60 * 1000);
 
@@ -705,7 +723,7 @@ app.post("/api/mpesa/initiate/:orderId", validate(schemas.mpesaInitiate), async 
   let cleanPhone = phoneNumber || order.buyerPhone;
   if (cleanPhone.startsWith("0")) cleanPhone = "254" + cleanPhone.slice(1);
 
-  console.log(`[Daraja STK Push] Sending Push for ${order.totalAmount} KES to ${cleanPhone}.. RequestId: ${checkoutRequestId}`);
+  log.info(`[Daraja STK Push] Sending Push for ${order.totalAmount} KES to ${cleanPhone}.. RequestId: ${checkoutRequestId}`);
 
   setTimeout(async () => {
     const currentOrder = orders.find(o => o.id === orderId);
@@ -742,13 +760,13 @@ app.post("/api/mpesa/initiate/:orderId", validate(schemas.mpesaInitiate), async 
 async function triggerSimulatedCallback(payload: any) {
   const { CheckoutRequestID, ResultCode, CallbackMetadata } = payload.Body.stkCallback;
   const order = orders.find(o => o.mpesaCheckoutRequestId === CheckoutRequestID);
-  if (!order) { console.error(`[M-Pesa] Unknown callback: ${CheckoutRequestID}`); return; }
-  if (order.status !== "pending") { console.log(`[M-Pesa] Already processed: ${order.id}`); return; }
+  if (!order) { log.error(`[M-Pesa] Unknown callback: ${CheckoutRequestID}`); return; }
+  if (order.status !== "pending") { log.info(`[M-Pesa] Already processed: ${order.id}`); return; }
 
   if (ResultCode === 0) {
     order.status = "paid";
     await syncUpdate("orders", order.id, { status: "paid" });
-    console.log(`[M-Pesa] Order ${order.id} PAID.`);
+    log.info(`[M-Pesa] Order ${order.id} PAID.`);
 
     const event = events.find(e => e.id === order.eventId);
     if (event) {
@@ -843,7 +861,7 @@ app.post("/api/tickets/verify", validate(schemas.verifyTicket), async (req, res)
     ticket.usedAt = new Date().toISOString();
     await syncUpdate("tickets", ticket.id, { status: "used", usedAt: ticket.usedAt });
   } catch (err) {
-    console.error("Failed to verify ticket:", err);
+    log.error("Failed to verify ticket:", err);
     return res.status(500).json({ valid: false, error: "Failed to verify ticket" });
   }
 
@@ -896,7 +914,7 @@ app.post("/api/upload/image", upload.single("image"), async (req, res) => {
     res.json({ url, size: metadata.size });
   } catch (e) {
     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    console.error("[Upload] Image processing error:", e);
+    log.error("[Upload] Image processing error:", e);
     res.status(500).json({ error: "Failed to process image" });
   }
 });
@@ -1541,9 +1559,17 @@ app.get("/api/admin/payouts", async (req, res) => {
   res.json(enriched.sort((a, b) => new Date(b.processedAt || b.requestedAt).getTime() - new Date(a.processedAt || a.requestedAt).getTime()));
 });
 
+// ---------- HEALTH CHECK ----------
+app.get("/health", (req, res) => {
+  res.json({ status: "healthy", service: "otiko-express", uptime: process.uptime() });
+});
+
+// ---------- SENTRY ERROR HANDLER ----------
+app.use(Sentry.Handlers.errorHandler());
+
 // ---------- GLOBAL ERROR HANDLER ----------
 app.use((err: any, req: any, res: any, next: any) => {
-  console.error("Unhandled error:", err);
+  log.error("Unhandled error:", err);
   res.status(500).json({ error: "Internal server error" });
 });
 
@@ -1566,7 +1592,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Otiko engine running on http://localhost:${PORT}`);
+    log.info(`Otiko engine running on http://localhost:${PORT}`);
   });
 }
 

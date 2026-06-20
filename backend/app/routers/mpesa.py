@@ -1,4 +1,5 @@
 import os
+import logging
 import uuid
 from decimal import Decimal
 from typing import Optional, List, Any
@@ -11,6 +12,8 @@ from redis.asyncio import Redis
 from ..dependencies import get_db, get_redis
 from ..models import Order, OrderStatus, TicketCategory, LedgerEntry, EntryType, Event
 from ..services.mpesa_service import MpesaService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -131,7 +134,7 @@ async def mpesa_callback(
         if is_processed:
             return {"ResultCode": 0, "ResultDesc": "Already processed"}
     except Exception as exc:
-        print(f"[MpesaCallback] Redis get error: {exc}")
+        logger.error("MpesaCallback Redis get error", exc_info=exc)
 
     # 3. Retrieve matching Order record
     result = await db.execute(
@@ -179,7 +182,7 @@ async def mpesa_callback(
             from workers.pdf_tasks import generate_and_send_ticket
             generate_and_send_ticket.delay(str(order.id))
         except Exception as err:
-            print(f"[MpesaCallback] Task enqueue warning: {err}. Proceeding with fallback trigger.")
+            logger.warning("MpesaCallback task enqueue failed, proceeding with fallback trigger", exc_info=err)
     else:
         # User canceled or expired push
         order.status = OrderStatus.FAILED
@@ -198,6 +201,6 @@ async def mpesa_callback(
     try:
         await redis.setex(cache_key, 86400, "1")  # 24 hour TTL protection
     except Exception as exc:
-        print(f"[MpesaCallback] Redis set processed warning: {exc}")
+        logger.error("MpesaCallback Redis set processed warning", exc_info=exc)
         
     return {"ResultCode": 0, "ResultDesc": "Success callback handled correctly"}
