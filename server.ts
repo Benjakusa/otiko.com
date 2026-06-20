@@ -889,6 +889,8 @@ async function triggerSimulatedCallback(payload: any) {
     }
   }
 
+  if (order.status !== 'pending') return;
+
   if (ResultCode === 0) {
     order.status = "paid";
     await syncUpdate("orders", order.id, { status: "paid" });
