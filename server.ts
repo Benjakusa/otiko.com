@@ -12,6 +12,7 @@ import { createServer as createViteServer } from "vite";
 import { initializeApp as initFirebase, cert } from "firebase-admin";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
+import { z } from "zod";
 import { Event, TicketCategory, Order, Ticket, LedgerEntry, Payout, PayoutRequest, AuditLog, Organizer } from "./src/types";
 
 const app = express();
@@ -45,6 +46,119 @@ const publicLimiter = rateLimit({
   standardHeaders: true, legacyHeaders: false,
   message: { error: "Too many requests. Please try again later." },
 });
+
+// ---------- VALIDATION MIDDLEWARE ----------
+function validate(schema: z.ZodType) {
+  return (req: any, res: any, next: any) => {
+    const result = schema.safeParse(req.body);
+    if (!result.success) {
+      const first = result.error.issues[0];
+      return res.status(400).json({ error: first?.message || "Invalid request body" });
+    }
+    req.body = result.data;
+    next();
+  };
+}
+
+const schemas = {
+  registerOrganizer: z.object({
+    firebaseUid: z.string().min(1, "firebaseUid is required"),
+    name: z.string().min(1, "name is required"),
+    email: z.string().email("Invalid email"),
+    phone: z.string().optional().default(""),
+    businessName: z.string().optional().default(""),
+    mpesaPayoutNumber: z.string().optional().default(""),
+  }),
+
+  updateOrganizer: z.object({
+    name: z.string().min(1).optional(),
+    phone: z.string().optional(),
+    businessName: z.string().optional(),
+    mpesaPayoutNumber: z.string().optional(),
+  }),
+
+  uploadKyc: z.object({
+    kraPin: z.string().optional().default(""),
+  }),
+
+  eventCategory: z.object({
+    name: z.string().min(1, "Category name is required"),
+    price: z.number().positive("Price must be positive"),
+    totalQuantity: z.number().int().positive("Quantity must be positive"),
+  }),
+
+  createEvent: z.object({
+    name: z.string().min(1, "Event name is required"),
+    flyerUrl: z.string().optional(),
+    eventDate: z.string().min(1, "Event date is required"),
+    venue: z.string().min(1, "Venue is required"),
+    description: z.string().optional().default(""),
+    categories: z.array(z.object({
+      name: z.string().min(1),
+      price: z.number().positive(),
+      totalQuantity: z.number().int().positive(),
+    })).min(1, "At least one category is required"),
+  }),
+
+  updateEvent: z.object({
+    name: z.string().min(1).optional(),
+    flyerUrl: z.string().optional(),
+    eventDate: z.string().min(1).optional(),
+    venue: z.string().min(1).optional(),
+    description: z.string().optional(),
+    status: z.enum(["active", "cancelled", "completed"]).optional(),
+  }),
+
+  reserveOrder: z.object({
+    categoryId: z.string().min(1, "categoryId is required"),
+    quantity: z.number().int().positive("quantity must be a positive integer"),
+    buyerName: z.string().min(1, "Buyer name is required"),
+    buyerPhone: z.string().min(1, "Buyer phone is required"),
+    buyerEmail: z.string().email("Invalid buyer email"),
+  }),
+
+  mpesaInitiate: z.object({
+    phoneNumber: z.string().optional(),
+  }),
+
+  simulatedCallback: z.object({
+    checkoutRequestId: z.string().min(1, "checkoutRequestId is required"),
+    success: z.boolean().optional(),
+  }),
+
+  verifyTicket: z.object({
+    ticketNumber: z.string().min(1, "ticketNumber is required"),
+    verificationCode: z.string().min(1, "verificationCode is required"),
+  }),
+
+  payoutRequest: z.object({
+    amount: z.number().min(101, "Minimum payout threshold is KES 100"),
+    paymentMethod: z.enum(["mpesa", "bank"]),
+    notes: z.string().optional(),
+    phoneNumber: z.string().optional(),
+    bankAccountHolder: z.string().optional(),
+    bankAccountNumber: z.string().optional(),
+    bankName: z.string().optional(),
+    bankBranchName: z.string().optional(),
+  }),
+
+  adminUpdateOrganizer: z.object({
+    kycStatus: z.string().optional(),
+    role: z.string().optional(),
+  }),
+
+  adminUpdateEvent: z.object({
+    status: z.string().min(1).optional(),
+  }),
+
+  adminRejectPayout: z.object({
+    reason: z.string().optional().default("No reason provided"),
+  }),
+
+  adminProcessPayout: z.object({
+    confirmationCode: z.string().min(3, "Confirmation code must be at least 3 characters"),
+  }),
+};
 
 const TICKET_SECRET = process.env.TICKET_SECRET;
 
@@ -267,11 +381,9 @@ async function loadData() {
 // ==================== API ENDPOINTS ====================
 
 // --- AUTH & ORGANIZERS ---
-app.post("/api/organizers/register", authLimiter, async (req, res) => {
+app.post("/api/organizers/register", authLimiter, validate(schemas.registerOrganizer), async (req, res) => {
   const { firebaseUid, name, email, phone, businessName, mpesaPayoutNumber } = req.body;
-  if (!firebaseUid || !name || !email) {
-    return res.status(400).json({ error: "Missing required profile details" });
-  }
+
 
   const existing = organizers.find(o => o.firebaseUid === firebaseUid || o.email === email);
   if (existing) return res.json(existing);
@@ -296,7 +408,7 @@ app.get("/api/organizers/me", async (req, res) => {
   res.json(org);
 });
 
-app.patch("/api/organizers/me", async (req, res) => {
+app.patch("/api/organizers/me", validate(schemas.updateOrganizer), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
 
@@ -311,7 +423,7 @@ app.patch("/api/organizers/me", async (req, res) => {
   res.json(org);
 });
 
-app.post("/api/organizers/upload-kyc", upload.single("kycDocument"), async (req, res) => {
+app.post("/api/organizers/upload-kyc", upload.single("kycDocument"), validate(schemas.uploadKyc), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
 
@@ -396,14 +508,11 @@ app.get("/api/events/:code", publicLimiter, (req, res) => {
   res.json({ ...evt, categories: cats, minPrice, maxPrice, isSoldOut });
 });
 
-app.post("/api/events", apiLimiter, async (req, res) => {
+app.post("/api/events", apiLimiter, validate(schemas.createEvent), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
 
   const { name, flyerUrl, eventDate, venue, description, categories } = req.body;
-  if (!name || !eventDate || !venue || !categories || !Array.isArray(categories)) {
-    return res.status(400).json({ error: "Missing required event fields" });
-  }
 
   const newEventId = `evt-${docId()}`;
   const eventCode = generateEventCode();
@@ -431,7 +540,7 @@ app.post("/api/events", apiLimiter, async (req, res) => {
   res.status(201).json({ ...newEvt, categories: formattedCats });
 });
 
-app.patch("/api/events/:code", async (req, res) => {
+app.patch("/api/events/:code", validate(schemas.updateEvent), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
 
@@ -512,13 +621,8 @@ app.get("/api/events/:code/tickets", async (req, res) => {
 });
 
 // --- ORDERS & RESERVATIONS (ATOMIC DECREMENT LOGIC) ---
-app.post("/api/orders/reserve", apiLimiter, async (req, res) => {
-  const { categoryId, quantity, buyerName, buyerPhone, buyerEmail } = req.body;
-  const qty = Number(quantity);
-
-  if (!categoryId || !buyerName || !buyerPhone || !buyerEmail || isNaN(qty) || qty <= 0) {
-    return res.status(400).json({ error: "Invalid booking request parameters" });
-  }
+app.post("/api/orders/reserve", apiLimiter, validate(schemas.reserveOrder), async (req, res) => {
+  const { categoryId, quantity: qty, buyerName, buyerPhone, buyerEmail } = req.body;
 
   const categoryIndex = ticketCategories.findIndex(c => c.id === categoryId);
   if (categoryIndex === -1) return res.status(404).json({ error: "Ticket category not found" });
@@ -572,7 +676,7 @@ app.get("/api/orders/:id", (req, res) => {
 });
 
 // --- M-PESA STK PUSH SIMULATOR ---
-app.post("/api/mpesa/initiate/:orderId", async (req, res) => {
+app.post("/api/mpesa/initiate/:orderId", validate(schemas.mpesaInitiate), async (req, res) => {
   const { orderId } = req.params;
   const { phoneNumber } = req.body;
 
@@ -671,7 +775,7 @@ async function triggerSimulatedCallback(payload: any) {
   }
 }
 
-app.post("/api/mpesa/simulated-callback", async (req, res) => {
+app.post("/api/mpesa/simulated-callback", validate(schemas.simulatedCallback), async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const { checkoutRequestId, success } = req.body;
   const order = orders.find(o => o.mpesaCheckoutRequestId === checkoutRequestId);
@@ -698,12 +802,8 @@ app.get("/api/orders/:orderId/tickets", (req, res) => {
   res.json(tickets.filter(t => t.orderId === orderId));
 });
 
-app.post("/api/tickets/verify", async (req, res) => {
+app.post("/api/tickets/verify", validate(schemas.verifyTicket), async (req, res) => {
   const { ticketNumber, verificationCode } = req.body;
-
-  if (!ticketNumber || !verificationCode) {
-    return res.status(400).json({ valid: false, error: "Missing ticket credentials" });
-  }
 
   const ticket = tickets.find(t =>
     String(t.ticketNumber) === String(ticketNumber) &&
@@ -811,7 +911,7 @@ function validateKenyanPhone(phone: string): boolean {
   return /^(254|0)?[17]\d{8}$/.test(phone.replace(/\s+/g, ""));
 }
 
-app.post("/api/wallet/payout-request", authLimiter, async (req, res) => {
+app.post("/api/wallet/payout-request", authLimiter, validate(schemas.payoutRequest), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
   if (org.kycStatus !== "verified") {
@@ -819,13 +919,7 @@ app.post("/api/wallet/payout-request", authLimiter, async (req, res) => {
   }
 
   const { amount, paymentMethod, notes } = req.body;
-  const withdrawAmount = Number(amount);
-  if (isNaN(withdrawAmount) || withdrawAmount <= 100) {
-    return res.status(400).json({ error: "Minimum payout threshold is KES 100" });
-  }
-  if (!paymentMethod || !["mpesa", "bank"].includes(paymentMethod)) {
-    return res.status(400).json({ error: "Payment method must be 'mpesa' or 'bank'" });
-  }
+  const withdrawAmount = amount;
 
   let accountDetails = "";
   if (paymentMethod === "mpesa") {
@@ -877,7 +971,7 @@ app.get("/api/admin/organizers", async (req, res) => {
   res.json(organizers.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
 });
 
-app.patch("/api/admin/organizers/:id", async (req, res) => {
+app.patch("/api/admin/organizers/:id", validate(schemas.adminUpdateOrganizer), async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const org = organizers.find(o => o.id === req.params.id);
   if (!org) return res.status(404).json({ error: "Organizer not found" });
@@ -1026,7 +1120,7 @@ app.get("/api/admin/events", async (req, res) => {
   res.json(events.sort((a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime()));
 });
 
-app.patch("/api/admin/events/:id", async (req, res) => {
+app.patch("/api/admin/events/:id", validate(schemas.adminUpdateEvent), async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const evt = events.find(e => e.id === req.params.id);
   if (!evt) return res.status(404).json({ error: "Event not found" });
@@ -1149,7 +1243,7 @@ app.post("/api/admin/payout-requests/:id/approve", async (req, res) => {
   res.json(pr);
 });
 
-app.post("/api/admin/payout-requests/:id/reject", async (req, res) => {
+app.post("/api/admin/payout-requests/:id/reject", validate(schemas.adminRejectPayout), async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const pr = payoutRequests.find(p => p.id === req.params.id);
   if (!pr) return res.status(404).json({ error: "Payout request not found" });
@@ -1168,18 +1262,14 @@ app.post("/api/admin/payout-requests/:id/reject", async (req, res) => {
   res.json(pr);
 });
 
-app.post("/api/admin/payout-requests/:id/process", async (req, res) => {
+app.post("/api/admin/payout-requests/:id/process", validate(schemas.adminProcessPayout), async (req, res) => {
   const adminOrg = await getOrganizerByToken(req);
   if (!adminOrg || adminOrg.role !== "admin") return res.status(401).json({ error: "Unauthorized" });
   const pr = payoutRequests.find(p => p.id === req.params.id);
   if (!pr) return res.status(404).json({ error: "Payout request not found" });
   if (pr.status !== "approved") return res.status(400).json({ error: "Request must be approved before processing" });
 
-  // Confirmation code required
   const { confirmationCode } = req.body;
-  if (!confirmationCode || typeof confirmationCode !== "string" || confirmationCode.trim().length < 3) {
-    return res.status(400).json({ error: "A valid payment confirmation code (min 3 characters) is required" });
-  }
 
   // KYC check (defensive — should have passed at approval)
   const org = organizers.find(o => o.id === pr.organizerId);
