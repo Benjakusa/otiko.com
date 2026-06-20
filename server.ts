@@ -118,9 +118,8 @@ async function getOrganizerByToken(req: express.Request): Promise<Organizer | nu
     }
   }
 
-  // Fallback: direct UID matching (simulator mode)
-  // Only use direct match when token is a short UID, not a Firebase JWT
-  if (!token.startsWith("eyJ")) {
+  // DEMO MODE: direct UID matching — only enabled when ALLOW_DEMO_AUTH=true
+  if (process.env.ALLOW_DEMO_AUTH === "true" && !token.startsWith("eyJ")) {
     return organizers.find(o => o.firebaseUid === token) || null;
   }
 
@@ -133,8 +132,11 @@ function getOrganizerByTokenSync(req: express.Request): Organizer | null {
   if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
 
   const token = authHeader.split(" ")[1];
-  if (token.startsWith("eyJ")) return null;
-  return organizers.find(o => o.firebaseUid === token) || null;
+  // DEMO MODE: direct UID matching — only enabled when ALLOW_DEMO_AUTH=true
+  if (process.env.ALLOW_DEMO_AUTH === "true" && !token.startsWith("eyJ")) {
+    return organizers.find(o => o.firebaseUid === token) || null;
+  }
+  return null;
 }
 
 // ---------- IMAGE UPLOAD SETUP ----------
@@ -1020,6 +1022,22 @@ app.delete("/api/admin/events/:id", async (req, res) => {
 app.get("/api/admin/tickets", async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   res.json(tickets.sort((a, b) => new Date(b.issuedAt || b.id).getTime() - new Date(a.issuedAt || a.id).getTime()));
+});
+
+app.delete("/api/admin/tickets/:id", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+
+  const ticket = tickets.find(t => t.id === req.params.id);
+  if (!ticket) return res.status(404).json({ error: "Ticket not found" });
+
+  const idx = tickets.indexOf(ticket);
+  tickets.splice(idx, 1);
+  await syncDelete("tickets", ticket.id);
+
+  await addAuditLog("ticket_deleted", "ticket", ticket.id, "admin", "admin",
+    `Deleted ticket ${ticket.ticketNumber} for event ${ticket.eventId}`);
+
+  res.json({ success: true, message: `Ticket ${ticket.ticketNumber} deleted.` });
 });
 
 // --- ADMIN: AUDIT LOGS ---
