@@ -49,7 +49,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
     formData.append("image", file);
     setImageUploading(true);
     try {
-      const token = localStorage.getItem("otiko_auth_token") || "user-default-uid";
+      const token = localStorage.getItem("otiko_auth_token") || "";
       const res = await fetch("/api/upload/image", { method: "POST", headers: { "Authorization": `Bearer ${token}` }, body: formData });
       const data = await res.json();
       if (res.ok) { setForm({...form, flyer: data.url}); setImagePreview(null); }
@@ -87,7 +87,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
     try {
       const res = await fetch("/api/events", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("otiko_auth_token") || "user-default-uid"}` },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("otiko_auth_token") || ""}` },
         body: JSON.stringify({
           name: form.name, eventDate: form.eventDate, venue: form.venue,
           description: form.description, flyerUrl: form.flyer,
@@ -124,7 +124,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
 
     setPayoutLoading(true); setPayoutError(""); setPayoutSuccess("");
     try {
-      const token = localStorage.getItem("otiko_auth_token") || "user-default-uid";
+      const token = localStorage.getItem("otiko_auth_token") || "";
       const body: any = { amount: Number(payoutAmount), paymentMethod, notes: payoutNotes };
       if (paymentMethod === "mpesa") {
         body.phoneNumber = mpesaPhone;
@@ -154,7 +154,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
     try {
       const res = await fetch(`/api/events/${code}`, {
         method: "DELETE",
-        headers: { "Authorization": `Bearer ${localStorage.getItem("otiko_auth_token") || "user-default-uid"}` }
+        headers: { "Authorization": `Bearer ${localStorage.getItem("otiko_auth_token") || ""}` }
       });
       if (res.ok) onRefresh();
       else { const err = await res.json(); alert(err.error || "Delete failed"); }

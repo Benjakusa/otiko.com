@@ -38,7 +38,7 @@ export default function App() {
 
   // Authentication Token State
   const [token, setToken] = useState<string>(() => {
-    return localStorage.getItem("otiko_auth_token") || "user-default-uid";
+    return localStorage.getItem("otiko_auth_token") || "";
   });
 
   useEffect(() => {
@@ -50,7 +50,7 @@ export default function App() {
   // Guard: redirect unauthenticated users to login when accessing restricted tabs
   const restrictedTabs = ["dashboard", "events", "wallet", "kyc", "scanner", "admin", "settings"];
   useEffect(() => {
-    if (restrictedTabs.includes(activeTab) && token === "user-default-uid") {
+    if (restrictedTabs.includes(activeTab) && (!token || token === "user-default-uid")) {
       const checkAuth = async () => {
         const res = await fetch("/api/organizers/me", {
           headers: { "Authorization": `Bearer ${token}` }
@@ -122,6 +122,8 @@ export default function App() {
   const [editEventVenue, setEditEventVenue] = useState("");
   const [editEventDesc, setEditEventDesc] = useState("");
   const [editEventFlyer, setEditEventFlyer] = useState("");
+  const [editEventFlyerPreview, setEditEventFlyerPreview] = useState<string | null>(null);
+  const [editEventFlyerUploading, setEditEventFlyerUploading] = useState(false);
   const [editEventStatus, setEditEventStatus] = useState<'draft' | 'active' | 'past' | 'cancelled'>("active");
 
   // Soft Delete State
@@ -269,6 +271,27 @@ export default function App() {
       else { alert(data.error || "Upload failed"); }
     } catch { alert("Image upload failed"); }
     finally { setNewEventFlyerUploading(false); }
+  };
+
+  const handleEditEventImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const allowed = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowed.includes(file.type)) { alert("Invalid format. Accepted: JPG, JPEG, PNG, WEBP"); return; }
+    if (file.size > 10 * 1024 * 1024) { alert("File too large. Max 10MB."); return; }
+    const reader = new FileReader();
+    reader.onload = () => setEditEventFlyerPreview(reader.result as string);
+    reader.readAsDataURL(file);
+    const formData = new FormData();
+    formData.append("image", file);
+    setEditEventFlyerUploading(true);
+    try {
+      const res = await fetch("/api/upload/image", { method: "POST", headers: { "Authorization": `Bearer ${token}` }, body: formData });
+      const data = await res.json();
+      if (res.ok) { setEditEventFlyer(data.url); setEditEventFlyerPreview(null); }
+      else { alert(data.error || "Upload failed"); }
+    } catch { alert("Image upload failed"); }
+    finally { setEditEventFlyerUploading(false); }
   };
 
   const handleCreateEvent = async (e: React.FormEvent) => {
@@ -584,7 +607,7 @@ export default function App() {
         onLoginNavigate={() => setActiveTab("login")}
         onSignupSuccess={(organizerData, idToken) => {
           setOrganizer(organizerData);
-          setToken(idToken || organizerData.firebaseUid || "user-default-uid");
+          setToken(idToken || organizerData.firebaseUid || "");
           setActiveTab(organizerData.role === "admin" ? "admin" : "dashboard");
         }}
       />
@@ -1250,14 +1273,12 @@ export default function App() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase">Flyer Image Resource (Stock URL selection below or type custom)</label>
-                      <input
-                        type="url"
-                        placeholder="https://images.unsplash.com/photo-..."
-                        value={newEventFlyer}
-                        onChange={(e) => setNewEventFlyer(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 focus:border-red-500 focus:bg-white rounded-lg px-3.5 py-2 text-xs font-mono"
-                      />
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase">Flyer Image</label>
+                      <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleNewEventImage}
+                        className="w-full text-xs file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer" />
+                      {newEventFlyerUploading && <div className="flex items-center gap-2 text-xs text-slate-500 mt-1"><Loader2 className="h-3 w-3 animate-spin" /> Uploading...</div>}
+                      {newEventFlyerPreview && <img src={newEventFlyerPreview} alt="Preview" className="mt-2 h-32 w-full object-cover rounded-lg border border-slate-200" />}
+                      {newEventFlyer && !newEventFlyerPreview && !newEventFlyerUploading && <div className="text-[10px] text-emerald-600 mt-1">Image uploaded ✓</div>}
                     </div>
                   </div>
 
@@ -1496,6 +1517,8 @@ export default function App() {
                                         setEditEventVenue(evt.venue);
                                         setEditEventDesc(evt.description || "");
                                         setEditEventFlyer(evt.flyerUrl || "");
+                                        setEditEventFlyerPreview(null);
+                                        setEditEventFlyerUploading(false);
                                         setEditEventStatus(evt.status);
                                       }}
                                       className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition"
@@ -1790,13 +1813,12 @@ export default function App() {
                       </div>
 
                       <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-500 uppercase">Poster Image Link Url</label>
-                        <input
-                          type="url"
-                          value={editEventFlyer}
-                          onChange={(e) => setEditEventFlyer(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 focus:bg-white rounded-lg px-3.5 py-2 text-xs font-mono"
-                        />
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase">Flyer Image</label>
+                        <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleEditEventImage}
+                          className="w-full text-xs file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200 cursor-pointer" />
+                        {editEventFlyerUploading && <div className="flex items-center gap-2 text-xs text-slate-500 mt-1"><Loader2 className="h-3 w-3 animate-spin" /> Uploading...</div>}
+                        {editEventFlyerPreview && <img src={editEventFlyerPreview} alt="Preview" className="mt-2 h-32 w-full object-cover rounded-lg border border-slate-200" />}
+                        {editEventFlyer && !editEventFlyerPreview && !editEventFlyerUploading && <div className="text-[10px] text-emerald-600 mt-1">Image uploaded ✓</div>}
                       </div>
 
                       <div className="space-y-1">
