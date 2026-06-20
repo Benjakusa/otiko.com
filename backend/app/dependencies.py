@@ -58,10 +58,10 @@ async def get_current_organizer(
             firebase_uid = decoded_token["uid"]
             email = decoded_token.get("email", "")
             name = decoded_token.get("name", "New Organizer")
-    except Exception as exc:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid or expired credentials token: {exc}"
+            detail="Invalid or expired credentials token"
         )
     
     # Query database for matching firebase_uid

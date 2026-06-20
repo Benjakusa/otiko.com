@@ -48,6 +48,10 @@ const publicLimiter = rateLimit({
 });
 
 // ---------- VALIDATION MIDDLEWARE ----------
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function validate(schema: z.ZodType) {
   return (req: any, res: any, next: any) => {
     const result = schema.safeParse(req.body);
@@ -549,17 +553,22 @@ app.patch("/api/events/:code", validate(schemas.updateEvent), async (req, res) =
   if (!evt) return res.status(404).json({ error: "Event not found" });
   if (evt.organizerId !== org.id) return res.status(403).json({ error: "You do not own this event" });
 
-  const { name, flyerUrl, eventDate, venue, description, status } = req.body;
-  if (name) evt.name = name;
-  if (flyerUrl) evt.flyerUrl = flyerUrl;
-  if (eventDate) evt.eventDate = eventDate;
-  if (venue) evt.venue = venue;
-  if (description) evt.description = description;
-  if (status) evt.status = status;
-  evt.updatedAt = new Date().toISOString();
+  try {
+    const { name, flyerUrl, eventDate, venue, description, status } = req.body;
+    if (name) evt.name = name;
+    if (flyerUrl) evt.flyerUrl = flyerUrl;
+    if (eventDate) evt.eventDate = eventDate;
+    if (venue) evt.venue = venue;
+    if (description) evt.description = description;
+    if (status) evt.status = status;
+    evt.updatedAt = new Date().toISOString();
 
-  await syncUpdate("events", evt.id, { name: evt.name, flyerUrl: evt.flyerUrl, eventDate: evt.eventDate, venue: evt.venue, description: evt.description, status: evt.status, updatedAt: evt.updatedAt });
-  res.json(evt);
+    await syncUpdate("events", evt.id, { name: evt.name, flyerUrl: evt.flyerUrl, eventDate: evt.eventDate, venue: evt.venue, description: evt.description, status: evt.status, updatedAt: evt.updatedAt });
+    res.json(evt);
+  } catch (err) {
+    console.error("Failed to update event:", err);
+    res.status(500).json({ error: "Failed to update event" });
+  }
 });
 
 app.delete("/api/events/:code", async (req, res) => {
@@ -824,9 +833,14 @@ app.post("/api/tickets/verify", validate(schemas.verifyTicket), async (req, res)
     return res.json({ valid: false, error: `Ticket already ${ticket.status.toUpperCase()}`, usedAt: ticket.usedAt });
   }
 
-  ticket.status = "used";
-  ticket.usedAt = new Date().toISOString();
-  await syncUpdate("tickets", ticket.id, { status: "used", usedAt: ticket.usedAt });
+  try {
+    ticket.status = "used";
+    ticket.usedAt = new Date().toISOString();
+    await syncUpdate("tickets", ticket.id, { status: "used", usedAt: ticket.usedAt });
+  } catch (err) {
+    console.error("Failed to verify ticket:", err);
+    return res.status(500).json({ valid: false, error: "Failed to verify ticket" });
+  }
 
   const order = orders.find(o => o.id === ticket.orderId);
   const event = events.find(e => e.id === ticket.eventId || (order && e.id === order.eventId));
@@ -955,12 +969,12 @@ app.post("/api/wallet/payout-request", authLimiter, validate(schemas.payoutReque
   // Notify admin
   if (adminEmail) {
     sendEmail(adminEmail, "New Payout Request",
-      `<p>Organizer: ${org.name} (${org.email})</p><p>Amount: KES ${withdrawAmount}</p><p>Method: ${paymentMethod}</p><p>Account: ${accountDetails}</p>`);
+      `<p>Organizer: ${esc(org.name)} (${esc(org.email)})</p><p>Amount: KES ${withdrawAmount}</p><p>Method: ${esc(paymentMethod)}</p><p>Account: ${esc(accountDetails)}</p>`);
   }
 
   // Notify organizer
   sendEmail(org.email, "Payout Request Received",
-    `<p>Your payout request <strong>${newReq.id}</strong> has been received.</p><p>Amount: KES ${withdrawAmount}</p><p>Status: Pending</p><p>Date: ${newReq.requestedAt}</p>`);
+    `<p>Your payout request <strong>${esc(newReq.id)}</strong> has been received.</p><p>Amount: KES ${withdrawAmount}</p><p>Status: Pending</p><p>Date: ${esc(newReq.requestedAt)}</p>`);
 
   res.status(201).json(newReq);
 });
@@ -1520,6 +1534,12 @@ app.get("/api/admin/payouts", async (req, res) => {
   });
 
   res.json(enriched.sort((a, b) => new Date(b.processedAt || b.requestedAt).getTime() - new Date(a.processedAt || a.requestedAt).getTime()));
+});
+
+// ---------- GLOBAL ERROR HANDLER ----------
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "Internal server error" });
 });
 
 // ==================== VITE MIDDLEWARE ====================
