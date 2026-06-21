@@ -49,14 +49,23 @@ async def list_public_events(
     result = await db.execute(stmt)
     events = result.scalars().all()
     
+    event_ids = [evt.id for evt in events]
     response_list = []
-    for evt in events:
-        stmt_cats = select(TicketCategory).where(TicketCategory.event_id == evt.id)
-        cats_res = await db.execute(stmt_cats)
+    
+    if event_ids:
+        cats_stmt = select(TicketCategory).where(TicketCategory.event_id.in_(event_ids))
+        cats_res = await db.execute(cats_stmt)
+        all_cats = cats_res.scalars().all()
         
-        evt_resp = EventResponse.model_validate(evt, from_attributes=True)
-        evt_resp.categories = list(cats_res.scalars().all())
-        response_list.append(evt_resp)
+        from collections import defaultdict
+        cats_by_event = defaultdict(list)
+        for cat in all_cats:
+            cats_by_event[cat.event_id].append(cat)
+            
+        for evt in events:
+            evt_resp = EventResponse.model_validate(evt, from_attributes=True)
+            evt_resp.categories = cats_by_event[evt.id]
+            response_list.append(evt_resp)
         
     return response_list
 

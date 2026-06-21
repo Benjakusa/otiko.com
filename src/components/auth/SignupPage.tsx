@@ -2,26 +2,28 @@ import React, { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { signupSchema, SignupInput } from "../../lib/validation/authSchemas";
 import { authService } from "../../lib/firebase/auth";
 import PasswordInput from "./PasswordInput";
 import PasswordStrengthIndicator from "./PasswordStrengthIndicator";
 import AuthCard from "./AuthCard";
+import { useAppStore } from "../../store/useAppStore";
 
-interface SignupPageProps {
-  onBackToHome: () => void;
-  onLoginNavigate: () => void;
-  onSignupSuccess: (organizerData: any, token: string) => void;
-}
-
-export default function SignupPage({ 
-  onBackToHome, 
-  onLoginNavigate, 
-  onSignupSuccess 
-}: SignupPageProps) {
+export default function SignupPage() {
+  const navigate = useNavigate();
+  const { setToken, setOrganizer } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [passwordScore, setPasswordScore] = useState(0);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+
+  const onBackToHome = () => navigate("/");
+  const onLoginNavigate = () => navigate("/login");
+  const onSignupSuccess = (organizerData: any, token: string) => {
+    setOrganizer(organizerData);
+    setToken(token);
+    navigate("/dashboard");
+  };
 
   const {
     register,
@@ -120,7 +122,7 @@ export default function SignupPage({
       }
 
       const freshOrganizer = await registerRes.json();
-      onSignupSuccess(freshOrganizer, "");
+      onSignupSuccess(freshOrganizer, user.idToken);
     } catch (err: any) {
       console.error("Google login failed:", err);
       if (err.code === "auth/configuration-not-found" || (err.message && err.message.includes("configuration-not-found"))) {

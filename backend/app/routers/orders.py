@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import redis.asyncio as aioredis
-from datetime import datetime
+from datetime import datetime, timezone
 
 from ..schemas import ReservationRequest, OrderResponse
 from ..dependencies import get_db, get_redis
@@ -59,7 +59,7 @@ async def reserve_tickets(
             detail="Event is not active or is restricted."
         )
 
-    if event.event_date < datetime.utcnow():
+    if event.event_date < datetime.now(timezone.utc).replace(tzinfo=None):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Event has already passed. Tickets are no longer on sale."

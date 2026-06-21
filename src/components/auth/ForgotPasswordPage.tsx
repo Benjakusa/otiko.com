@@ -6,15 +6,12 @@ import { forgotPasswordSchema, ForgotPasswordInput } from "../../lib/validation/
 import { authService } from "../../lib/firebase/auth";
 import AuthCard from "./AuthCard";
 
-interface ForgotPasswordPageProps {
-  onBackToHome: () => void;
-  onLoginNavigate: () => void;
-}
+import { useNavigate } from "react-router-dom";
 
-export default function ForgotPasswordPage({ 
-  onBackToHome, 
-  onLoginNavigate 
-}: ForgotPasswordPageProps) {
+export default function ForgotPasswordPage() {
+  const navigate = useNavigate();
+  const onBackToHome = () => navigate("/");
+  const onLoginNavigate = () => navigate("/login");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);

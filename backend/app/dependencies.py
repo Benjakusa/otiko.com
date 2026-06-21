@@ -36,13 +36,20 @@ async def get_current_organizer(
     db: AsyncSession = Depends(get_db)
 ) -> Organizer:
     """Authenticates the incoming auth token against Firebase and retrieves or creates the local organizer"""
+    import os
+    
     if not token:
-        # Fallback for testing/local-mock workspace flow
-        token = "mock-organizer-uid"
+        if os.environ.get("ALLOW_DEMO_AUTH") == "true":
+            token = "mock-organizer-uid"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing authorization token"
+            )
         
     try:
         # Check if doing mock/local bypass for preview demo
-        if token == "mock-organizer-uid" or token == "user-default-uid":
+        if os.environ.get("ALLOW_DEMO_AUTH") == "true" and (token == "mock-organizer-uid" or token == "user-default-uid"):
             firebase_uid = "org_123_default"
             email = "demo@otiko.com"
             name = "Demo Organizer"
@@ -51,10 +58,10 @@ async def get_current_organizer(
             firebase_uid = decoded_token["uid"]
             email = decoded_token.get("email", "")
             name = decoded_token.get("name", "New Organizer")
-    except Exception as exc:
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid or expired credentials token: {exc}"
+            detail="Invalid or expired credentials token"
         )
     
     # Query database for matching firebase_uid

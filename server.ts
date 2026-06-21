@@ -4,18 +4,187 @@ import crypto from "crypto";
 import fs from "fs";
 import multer from "multer";
 import sharp from "sharp";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import nodemailer from "nodemailer";
 import { createServer as createViteServer } from "vite";
 import { initializeApp as initFirebase, cert } from "firebase-admin";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
+import cookieParser from "cookie-parser";
+import { z } from "zod";
+import * as Sentry from "@sentry/node";
 import { Event, TicketCategory, Order, Ticket, LedgerEntry, Payout, PayoutRequest, AuditLog, Organizer } from "./src/types";
+import { initRedis, getRedis, tryReserveTickets, releaseTickets, seedAllCategories, RedisRateLimitStore, redisCache, bustCache, markSessionRevoked, isSessionRevoked, getRedisHealth } from "./redis";
+
+// ---------- STRUCTURED LOGGER ----------
+const log = {
+  info: (msg: string, meta?: any) => console.log(JSON.stringify({ t: new Date().toISOString(), level: "info", msg, ...meta })),
+  warn: (msg: string, meta?: any) => console.warn(JSON.stringify({ t: new Date().toISOString(), level: "warn", msg, ...meta })),
+  error: (msg: string, err?: any, meta?: any) => {
+    console.error(JSON.stringify({ t: new Date().toISOString(), level: "error", msg, error: err?.message || String(err), stack: err?.stack, ...meta }));
+    if (process.env.SENTRY_DSN && err) Sentry.captureException(err);
+  },
+};
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+Sentry.init({
+  dsn: process.env.SENTRY_DSN || "",
+  tracesSampleRate: 1.0,
+  enabled: !!process.env.SENTRY_DSN,
+});
 app.use(express.json());
+app.use(cookieParser());
+
+const CORS_ORIGINS = [
+  "https://otiko.com",
+  "https://www.otiko.com",
+  "https://otiko-9e7a9.web.app",
+  "https://otiko-9e7a9.firebaseapp.com",
+  "http://localhost:5173",
+  "http://localhost:3000",
+];
+app.use(cors({ origin: CORS_ORIGINS, credentials: true }));
+
+// ---------- RATE LIMITERS ----------
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 10,
+  standardHeaders: true, legacyHeaders: false,
+  store: new RedisRateLimitStore(),
+  message: { error: "Too many requests. Please try again later." },
+});
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 30,
+  standardHeaders: true, legacyHeaders: false,
+  store: new RedisRateLimitStore(),
+  message: { error: "Too many requests. Please try again later." },
+});
+const publicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 100,
+  standardHeaders: true, legacyHeaders: false,
+  store: new RedisRateLimitStore(),
+  message: { error: "Too many requests. Please try again later." },
+});
+
+// ---------- VALIDATION MIDDLEWARE ----------
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function validate(schema: z.ZodType) {
+  return (req: any, res: any, next: any) => {
+    const result = schema.safeParse(req.body);
+    if (!result.success) {
+      const first = result.error.issues[0];
+      return res.status(400).json({ error: first?.message || "Invalid request body" });
+    }
+    req.body = result.data;
+    next();
+  };
+}
+
+const schemas = {
+  registerOrganizer: z.object({
+    firebaseUid: z.string().min(1, "firebaseUid is required"),
+    name: z.string().min(1, "name is required"),
+    email: z.string().email("Invalid email"),
+    phone: z.string().optional().default(""),
+    businessName: z.string().optional().default(""),
+    mpesaPayoutNumber: z.string().optional().default(""),
+  }),
+
+  updateOrganizer: z.object({
+    name: z.string().min(1).optional(),
+    phone: z.string().optional(),
+    businessName: z.string().optional(),
+    mpesaPayoutNumber: z.string().optional(),
+  }),
+
+  uploadKyc: z.object({
+    kraPin: z.string().optional().default(""),
+  }),
+
+  eventCategory: z.object({
+    name: z.string().min(1, "Category name is required"),
+    price: z.number().positive("Price must be positive"),
+    totalQuantity: z.number().int().positive("Quantity must be positive"),
+  }),
+
+  createEvent: z.object({
+    name: z.string().min(1, "Event name is required"),
+    flyerUrl: z.string().optional(),
+    eventDate: z.string().min(1, "Event date is required"),
+    venue: z.string().min(1, "Venue is required"),
+    description: z.string().optional().default(""),
+    categories: z.array(z.object({
+      name: z.string().min(1),
+      price: z.number().positive(),
+      totalQuantity: z.number().int().positive(),
+    })).min(1, "At least one category is required"),
+  }),
+
+  updateEvent: z.object({
+    name: z.string().min(1).optional(),
+    flyerUrl: z.string().optional(),
+    eventDate: z.string().min(1).optional(),
+    venue: z.string().min(1).optional(),
+    description: z.string().optional(),
+    status: z.enum(["active", "cancelled", "completed"]).optional(),
+  }),
+
+  reserveOrder: z.object({
+    categoryId: z.string().min(1, "categoryId is required"),
+    quantity: z.number().int().positive("quantity must be a positive integer"),
+    buyerName: z.string().min(1, "Buyer name is required"),
+    buyerPhone: z.string().min(1, "Buyer phone is required"),
+    buyerEmail: z.string().email("Invalid buyer email"),
+  }),
+
+  mpesaInitiate: z.object({
+    phoneNumber: z.string().optional(),
+  }),
+
+  simulatedCallback: z.object({
+    checkoutRequestId: z.string().min(1, "checkoutRequestId is required"),
+    success: z.boolean().optional(),
+  }),
+
+  verifyTicket: z.object({
+    ticketNumber: z.string().min(1, "ticketNumber is required"),
+    verificationCode: z.string().min(1, "verificationCode is required"),
+  }),
+
+  payoutRequest: z.object({
+    amount: z.number().min(101, "Minimum payout threshold is KES 100"),
+    paymentMethod: z.enum(["mpesa", "bank"]),
+    notes: z.string().optional(),
+    phoneNumber: z.string().optional(),
+    bankAccountHolder: z.string().optional(),
+    bankAccountNumber: z.string().optional(),
+    bankName: z.string().optional(),
+    bankBranchName: z.string().optional(),
+  }),
+
+  adminUpdateOrganizer: z.object({
+    kycStatus: z.string().optional(),
+    role: z.string().optional(),
+  }),
+
+  adminUpdateEvent: z.object({
+    status: z.string().min(1).optional(),
+  }),
+
+  adminRejectPayout: z.object({
+    reason: z.string().optional().default("No reason provided"),
+  }),
+
+  adminProcessPayout: z.object({
+    confirmationCode: z.string().min(3, "Confirmation code must be at least 3 characters"),
+  }),
+};
 
 const TICKET_SECRET = process.env.TICKET_SECRET;
 
@@ -48,12 +217,40 @@ if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
     initFirebase({ credential: cert(serviceAccount) });
     firestore = getFirestore() as Firestore;
     firebaseAuth = getAuth();
-    console.log("[Firebase] Admin SDK initialized successfully");
+    log.info("[Firebase] Admin SDK initialized successfully");
   } catch (err) {
-    console.error("[Firebase] Admin SDK init failed, running in-memory only:", err);
+    log.error("[Firebase] Admin SDK init failed, running in-memory only:", err);
   }
 } else {
-  console.log("[Firebase] No service account found, running in-memory only");
+    log.info("[Firebase] No service account found, running in-memory only");
+}
+
+// ---------- REDIS INIT ----------
+initRedis().then(() => {
+  log.info("[Redis] Initialized");
+  seedAllCategories(ticketCategories);
+  runReconciliationSweeper();
+});
+
+// Reconciliation sweeper — runs every 60s, compares Redis vs in-memory counts
+function runReconciliationSweeper() {
+  setInterval(async () => {
+    const redis = getRedis();
+    if (!redis) return;
+    for (const cat of ticketCategories) {
+      const key = `ticket:cat:${cat.id}:remaining`;
+      const redisVal = await redis.get(key).catch(() => null);
+      if (redisVal === null) continue;
+      const redisRemaining = parseInt(redisVal, 10);
+      if (redisRemaining !== cat.remainingQuantity) {
+        const diff = cat.remainingQuantity - redisRemaining;
+        if (diff !== 0) {
+          await redis.incrBy(key, diff).catch(() => {});
+          log.info("[Reconcile] Corrected mismatch for category:", { categoryId: cat.id, inMemory: cat.remainingQuantity, redisWas: redisRemaining, corrected: cat.remainingQuantity });
+        }
+      }
+    }
+  }, 60_000);
 }
 
 // ---------- HELPERS ----------
@@ -64,28 +261,28 @@ function docId(): string {
 async function syncSet(collection: string, id: string, data: any) {
   if (firestore) {
     try { await firestore.collection(collection).doc(id).set(data); }
-    catch (e) { console.error(`[Firestore] Error writing ${collection}/${id}:`, e); }
+    catch (e) { log.error(`[Firestore] Error writing ${collection}/${id}:`, e); }
   }
 }
 
 async function syncUpdate(collection: string, id: string, data: any) {
   if (firestore) {
     try { await firestore.collection(collection).doc(id).update(data); }
-    catch (e) { console.error(`[Firestore] Error updating ${collection}/${id}:`, e); }
+    catch (e) { log.error(`[Firestore] Error updating ${collection}/${id}:`, e); }
   }
 }
 
 async function syncDelete(collection: string, id: string) {
   if (firestore) {
     try { await firestore.collection(collection).doc(id).delete(); }
-    catch (e) { console.error(`[Firestore] Error deleting ${collection}/${id}:`, e); }
+    catch (e) { log.error(`[Firestore] Error deleting ${collection}/${id}:`, e); }
   }
 }
 
 async function syncAdd(collection: string, data: any) {
   if (firestore) {
     try { await firestore.collection(collection).add(data); }
-    catch (e) { console.error(`[Firestore] Error adding to ${collection}:`, e); }
+    catch (e) { log.error(`[Firestore] Error adding to ${collection}:`, e); }
   }
 }
 
@@ -96,31 +293,37 @@ async function syncDeleteWhere(collection: string, field: string, value: string)
       const batch = firestore.batch();
       snap.docs.forEach(doc => batch.delete(doc.ref));
       await batch.commit();
-    } catch (e) { console.error(`[Firestore] Error batch deleting ${collection}:`, e); }
+    } catch (e) { log.error(`[Firestore] Error batch deleting ${collection}:`, e); }
   }
 }
 
 // ---------- AUTH MIDDLEWARE ----------
 async function getOrganizerByToken(req: express.Request): Promise<Organizer | null> {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-
-  const token = authHeader.split(" ")[1];
+  let token = req.cookies?.token;
+  if (!token) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+    token = authHeader.split(" ")[1];
+  }
 
   // If Firebase Auth is available, verify the JWT
   if (firebaseAuth) {
     try {
       const decoded = await firebaseAuth.verifyIdToken(token);
+      // Redis session revocation check (fail-open)
+      if (await isSessionRevoked(decoded.uid, decoded.iat)) {
+        log.info("[Auth] Session revoked for", { uid: decoded.uid });
+        return null;
+      }
       return organizers.find(o => o.firebaseUid === decoded.uid) || null;
     } catch (err) {
-      console.warn("[Auth] verifyIdToken failed:", (err as Error).message);
+      log.warn("[Auth] verifyIdToken failed:", { message: (err as Error).message });
       return null;
     }
   }
 
-  // Fallback: direct UID matching (simulator mode)
-  // Only use direct match when token is a short UID, not a Firebase JWT
-  if (!token.startsWith("eyJ")) {
+  // DEMO MODE: direct UID matching — only enabled when ALLOW_DEMO_AUTH=true
+  if (process.env.ALLOW_DEMO_AUTH === "true" && !token.startsWith("eyJ")) {
     return organizers.find(o => o.firebaseUid === token) || null;
   }
 
@@ -129,12 +332,17 @@ async function getOrganizerByToken(req: express.Request): Promise<Organizer | nu
 
 // Sync version for endpoints that don't need async
 function getOrganizerByTokenSync(req: express.Request): Organizer | null {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
-
-  const token = authHeader.split(" ")[1];
-  if (token.startsWith("eyJ")) return null;
-  return organizers.find(o => o.firebaseUid === token) || null;
+  let token = req.cookies?.token;
+  if (!token) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) return null;
+    token = authHeader.split(" ")[1];
+  }
+  // This sync version only works in DEMO MODE (no Firebase verify)
+  if (process.env.ALLOW_DEMO_AUTH === "true" && !token.startsWith("eyJ")) {
+    return organizers.find(o => o.firebaseUid === token) || null;
+  }
+  return null;
 }
 
 // ---------- IMAGE UPLOAD SETUP ----------
@@ -158,18 +366,18 @@ if (smtpHost && smtpUser) {
       host: smtpHost, port: smtpPort, secure: smtpPort === 465,
       auth: { user: smtpUser, pass: smtpPass }
     });
-    console.log("[Email] SMTP transporter initialized");
-  } catch (e) { console.error("[Email] Failed to init SMTP:", e); }
+    log.info("[Email] SMTP transporter initialized");
+  } catch (e) { log.error("[Email] Failed to init SMTP:", e); }
 } else {
-  console.log("[Email] No SMTP config, emails will be logged to console");
+  log.info("[Email] No SMTP config, emails will be logged to console");
 }
 
 async function sendEmail(to: string, subject: string, html: string) {
   if (mailTransporter) {
     try { await mailTransporter.sendMail({ from: emailFrom, to, subject, html }); }
-    catch (e) { console.error(`[Email] Failed to send "${subject}":`, e); }
+    catch (e) { log.error(`[Email] Failed to send "${subject}":`, e); }
   }
-  console.log(`[Email] [${subject}] To: ${to} — ${html.replace(/<[^>]*>/g, "").slice(0, 200)}`);
+  log.info(`[Email] [${subject}] To: ${to} — ${html.replace(/<[^>]*>/g, "").slice(0, 200)}`);
 }
 
 // ---------- AUDIT LOG ----------
@@ -202,6 +410,11 @@ function generateEventCode(): string {
 
 // ---------- SEED DATA ----------
 // ---------- LOAD FROM FIRESTORE ----------
+// NOTE: In-memory arrays (organizers[], events[], orders[], tickets[], etc.)
+// are loaded wholesale at startup and live entirely in RAM. No pagination or
+// server-side filtering — every `.find()` and `.filter()` iterates the full
+// array. This will not scale past ~10K records per entity. Migrate to
+// SQL/Firestore query-based access before production traffic.
 async function loadData() {
   if (firestore) {
     try {
@@ -222,25 +435,66 @@ async function loadData() {
         payouts = paySnap.docs.map(d => ({ id: d.id, ...d.data() } as Payout));
         const prSnap = await firestore.collection("payoutRequests").get();
         payoutRequests = prSnap.docs.map(d => ({ id: d.id, ...d.data() } as PayoutRequest));
-        console.log(`[Firestore] Loaded ${organizers.length} organizers, ${events.length} events, ${orders.length} orders, ${payoutRequests.length} payout requests`);
+        log.info(`[Firestore] Loaded ${organizers.length} organizers, ${events.length} events, ${orders.length} orders, ${payoutRequests.length} payout requests`);
         return;
       }
     } catch (e) {
-      console.error("[Firestore] Error loading data:", e);
+      log.error("[Firestore] Error loading data:", e);
     }
   }
 
-  console.log("[Server] No seed data — awaiting organizer-created events");
+  log.info("[Server] No seed data — awaiting organizer-created events");
 }
 
 // ==================== API ENDPOINTS ====================
 
-// --- AUTH & ORGANIZERS ---
-app.post("/api/organizers/register", async (req, res) => {
-  const { firebaseUid, name, email, phone, businessName, mpesaPayoutNumber } = req.body;
-  if (!firebaseUid || !name || !email) {
-    return res.status(400).json({ error: "Missing required profile details" });
+// --- SESSION MANAGEMENT (httpOnly cookie auth) ---
+const SESSION_MAX_AGE = 14 * 24 * 60 * 60 * 1000; // 14 days
+
+app.post("/api/auth/session", async (req, res) => {
+  try {
+    const { idToken } = req.body;
+    if (!idToken || typeof idToken !== "string") {
+      return res.status(400).json({ error: "idToken is required" });
+    }
+    if (!firebaseAuth) {
+      return res.status(503).json({ error: "Firebase auth not available" });
+    }
+    const decoded = await firebaseAuth.verifyIdToken(idToken);
+    res.cookie("token", idToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      maxAge: SESSION_MAX_AGE,
+      path: "/",
+    });
+    res.json({ uid: decoded.uid, expiresIn: SESSION_MAX_AGE });
+  } catch (err) {
+    log.error("[Auth] Session creation failed:", err);
+    res.status(401).json({ error: "Invalid token" });
   }
+});
+
+app.post("/api/auth/logout", async (req, res) => {
+  const token = req.cookies?.token;
+  res.clearCookie("token", { path: "/" });
+  if (token && firebaseAuth) {
+    try {
+      const decoded = await firebaseAuth.verifyIdToken(token);
+      await firebaseAuth.revokeRefreshTokens(decoded.uid);
+      await markSessionRevoked(decoded.uid, decoded.iat, decoded.exp);
+      log.info("[Auth] Tokens revoked for", { uid: decoded.uid });
+    } catch {
+      // Token already expired or invalid — clear cookie is sufficient
+    }
+  }
+  res.json({ success: true });
+});
+
+// --- AUTH & ORGANIZERS ---
+app.post("/api/organizers/register", authLimiter, validate(schemas.registerOrganizer), async (req, res) => {
+  const { firebaseUid, name, email, phone, businessName, mpesaPayoutNumber } = req.body;
+
 
   const existing = organizers.find(o => o.firebaseUid === firebaseUid || o.email === email);
   if (existing) return res.json(existing);
@@ -265,7 +519,7 @@ app.get("/api/organizers/me", async (req, res) => {
   res.json(org);
 });
 
-app.patch("/api/organizers/me", async (req, res) => {
+app.patch("/api/organizers/me", validate(schemas.updateOrganizer), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
 
@@ -280,7 +534,7 @@ app.patch("/api/organizers/me", async (req, res) => {
   res.json(org);
 });
 
-app.post("/api/organizers/upload-kyc", upload.single("kycDocument"), async (req, res) => {
+app.post("/api/organizers/upload-kyc", upload.single("kycDocument"), validate(schemas.uploadKyc), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
 
@@ -312,7 +566,7 @@ app.post("/api/organizers/upload-kyc", upload.single("kycDocument"), async (req,
         fs.writeFileSync(req.file.path, compressedBytes);
       }
     } catch (pdfErr) {
-      console.warn("[KYC] PDF compression skipped:", (pdfErr as Error).message);
+      log.warn("[KYC] PDF compression skipped:", (pdfErr as Error).message);
     }
     kycDocUrl = `/uploads/${req.file.filename}`;
   }
@@ -325,7 +579,7 @@ app.post("/api/organizers/upload-kyc", upload.single("kycDocument"), async (req,
 });
 
 // --- EVENTS & CATEGORIES ---
-app.get("/api/events", async (req, res) => {
+app.get("/api/events", publicLimiter, async (req, res) => {
   const { status, search } = req.query;
   let filtered = [...events];
 
@@ -352,7 +606,7 @@ app.get("/api/events", async (req, res) => {
   res.json(result);
 });
 
-app.get("/api/events/:code", (req, res) => {
+app.get("/api/events/:code", publicLimiter, redisCache(30), (req, res) => {
   const { code } = req.params;
   const evt = events.find(e => e.eventCode === code);
   if (!evt) return res.status(404).json({ error: "Event not found" });
@@ -365,14 +619,11 @@ app.get("/api/events/:code", (req, res) => {
   res.json({ ...evt, categories: cats, minPrice, maxPrice, isSoldOut });
 });
 
-app.post("/api/events", async (req, res) => {
+app.post("/api/events", apiLimiter, validate(schemas.createEvent), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
 
   const { name, flyerUrl, eventDate, venue, description, categories } = req.body;
-  if (!name || !eventDate || !venue || !categories || !Array.isArray(categories)) {
-    return res.status(400).json({ error: "Missing required event fields" });
-  }
 
   const newEventId = `evt-${docId()}`;
   const eventCode = generateEventCode();
@@ -400,7 +651,7 @@ app.post("/api/events", async (req, res) => {
   res.status(201).json({ ...newEvt, categories: formattedCats });
 });
 
-app.patch("/api/events/:code", async (req, res) => {
+app.patch("/api/events/:code", validate(schemas.updateEvent), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
 
@@ -409,17 +660,23 @@ app.patch("/api/events/:code", async (req, res) => {
   if (!evt) return res.status(404).json({ error: "Event not found" });
   if (evt.organizerId !== org.id) return res.status(403).json({ error: "You do not own this event" });
 
-  const { name, flyerUrl, eventDate, venue, description, status } = req.body;
-  if (name) evt.name = name;
-  if (flyerUrl) evt.flyerUrl = flyerUrl;
-  if (eventDate) evt.eventDate = eventDate;
-  if (venue) evt.venue = venue;
-  if (description) evt.description = description;
-  if (status) evt.status = status;
-  evt.updatedAt = new Date().toISOString();
+  try {
+    const { name, flyerUrl, eventDate, venue, description, status } = req.body;
+    if (name) evt.name = name;
+    if (flyerUrl) evt.flyerUrl = flyerUrl;
+    if (eventDate) evt.eventDate = eventDate;
+    if (venue) evt.venue = venue;
+    if (description) evt.description = description;
+    if (status) evt.status = status;
+    evt.updatedAt = new Date().toISOString();
 
-  await syncUpdate("events", evt.id, { name: evt.name, flyerUrl: evt.flyerUrl, eventDate: evt.eventDate, venue: evt.venue, description: evt.description, status: evt.status, updatedAt: evt.updatedAt });
-  res.json(evt);
+    await syncUpdate("events", evt.id, { name: evt.name, flyerUrl: evt.flyerUrl, eventDate: evt.eventDate, venue: evt.venue, description: evt.description, status: evt.status, updatedAt: evt.updatedAt });
+    bustCache(`/api/events/${code}`).catch(() => {});
+    res.json(evt);
+  } catch (err) {
+    log.error("Failed to update event:", err);
+    res.status(500).json({ error: "Failed to update event" });
+  }
 });
 
 app.delete("/api/events/:code", async (req, res) => {
@@ -443,6 +700,7 @@ app.delete("/api/events/:code", async (req, res) => {
   evt.status = "cancelled";
   evt.updatedAt = new Date().toISOString();
 
+  bustCache(`/api/events/${code}`).catch(() => {});
   res.json({ success: true, message: "Event cancelled successfully.", event: evt });
 });
 
@@ -480,14 +738,9 @@ app.get("/api/events/:code/tickets", async (req, res) => {
   res.json(eventTickets);
 });
 
-// --- ORDERS & RESERVATIONS (ATOMIC DECREMENT LOGIC) ---
-app.post("/api/orders/reserve", async (req, res) => {
-  const { categoryId, quantity, buyerName, buyerPhone, buyerEmail } = req.body;
-  const qty = Number(quantity);
-
-  if (!categoryId || !buyerName || !buyerPhone || !buyerEmail || isNaN(qty) || qty <= 0) {
-    return res.status(400).json({ error: "Invalid booking request parameters" });
-  }
+// --- ORDERS & RESERVATIONS (ATOMIC REDIS DECR) ---
+app.post("/api/orders/reserve", apiLimiter, validate(schemas.reserveOrder), async (req, res) => {
+  const { categoryId, quantity: qty, buyerName, buyerPhone, buyerEmail } = req.body;
 
   const categoryIndex = ticketCategories.findIndex(c => c.id === categoryId);
   if (categoryIndex === -1) return res.status(404).json({ error: "Ticket category not found" });
@@ -495,11 +748,36 @@ app.post("/api/orders/reserve", async (req, res) => {
   const category = ticketCategories[categoryIndex];
   const evt = events.find(e => e.id === category.eventId);
   if (!evt || evt.status !== "active") return res.status(400).json({ error: "This event is not actively accepting reservations" });
-  if (new Date(evt.eventDate).getTime() < Date.now()) return res.status(400).json({ error: "This event date has already passed" });
-  if (category.remainingQuantity < qty) return res.status(409).json({ error: "NOT_ENOUGH_TICKETS", message: "Requested ticket count exceeds remaining category tickets." });
+  const parsedEventDate = evt.eventDate.includes('Z') || evt.eventDate.includes('+') ? new Date(evt.eventDate) : new Date(evt.eventDate + 'Z');
+  if (parsedEventDate.getTime() < Date.now()) return res.status(400).json({ error: "This event date has already passed" });
 
-  category.remainingQuantity -= qty;
-  await syncUpdate("ticketCategories", category.id, { remainingQuantity: category.remainingQuantity });
+  // --- Phase A: Atomic reservation via Redis ---
+  const redis = getRedis();
+
+  if (redis) {
+    // Primary path: Redis Lua script for atomic check-and-decrement
+    const result = await tryReserveTickets(categoryId, qty);
+    if (!result.ok) {
+      const reason = (result as { ok: false; reason: string }).reason;
+      if (reason === "NOT_ENOUGH_TICKETS") {
+        return res.status(409).json({ error: "NOT_ENOUGH_TICKETS", message: "Requested ticket count exceeds remaining category tickets." });
+      }
+      return res.status(503).json({ error: "Reservation service unavailable" });
+    }
+    // Redis decrement succeeded — update in-memory count for consistency
+    category.remainingQuantity = Math.max(0, result.remaining);
+  } else {
+    // Fallback: in-memory check (safe for single instance, NOT safe horizontally scaled)
+    if (category.remainingQuantity < qty) {
+      return res.status(409).json({ error: "NOT_ENOUGH_TICKETS", message: "Requested ticket count exceeds remaining category tickets." });
+    }
+    category.remainingQuantity -= qty;
+  }
+
+  // Durable write to Firestore (best-effort — reconciled by sweeper if it fails)
+  await syncUpdate("ticketCategories", category.id, { remainingQuantity: category.remainingQuantity }).catch((err: any) => {
+    log.warn("[Reservation] Firestore sync failed, will reconcile:", err?.message);
+  });
 
   const totalAmount = category.price * qty;
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
@@ -512,8 +790,11 @@ app.post("/api/orders/reserve", async (req, res) => {
   };
 
   orders.push(newOrder);
-  await syncSet("orders", newOrder.id, newOrder);
+  await syncSet("orders", newOrder.id, newOrder).catch((err: any) => {
+    log.warn("[Reservation] Order Firestore sync failed:", err?.message);
+  });
 
+  // Sweeper: release on expiry
   setTimeout(async () => {
     const latestOrder = orders.find(o => o.id === newOrder.id);
     if (latestOrder && latestOrder.status === "pending") {
@@ -521,10 +802,11 @@ app.post("/api/orders/reserve", async (req, res) => {
       const cat = ticketCategories.find(c => c.id === latestOrder.categoryId);
       if (cat) {
         cat.remainingQuantity += latestOrder.quantity;
-        await syncUpdate("ticketCategories", cat.id, { remainingQuantity: cat.remainingQuantity });
+        await syncUpdate("ticketCategories", cat.id, { remainingQuantity: cat.remainingQuantity }).catch(() => {});
       }
-      await syncUpdate("orders", latestOrder.id, { status: "expired" });
-      console.log(`[Sweeper] Order ${latestOrder.id} expired, tickets released.`);
+      if (redis) await releaseTickets(latestOrder.categoryId, latestOrder.quantity);
+      await syncUpdate("orders", latestOrder.id, { status: "expired" }).catch(() => {});
+      log.info("[Sweeper] Order expired, tickets released:", { orderId: latestOrder.id });
     }
   }, 5 * 60 * 1000);
 
@@ -541,7 +823,7 @@ app.get("/api/orders/:id", (req, res) => {
 });
 
 // --- M-PESA STK PUSH SIMULATOR ---
-app.post("/api/mpesa/initiate/:orderId", async (req, res) => {
+app.post("/api/mpesa/initiate/:orderId", validate(schemas.mpesaInitiate), async (req, res) => {
   const { orderId } = req.params;
   const { phoneNumber } = req.body;
 
@@ -556,7 +838,7 @@ app.post("/api/mpesa/initiate/:orderId", async (req, res) => {
   let cleanPhone = phoneNumber || order.buyerPhone;
   if (cleanPhone.startsWith("0")) cleanPhone = "254" + cleanPhone.slice(1);
 
-  console.log(`[Daraja STK Push] Sending Push for ${order.totalAmount} KES to ${cleanPhone}.. RequestId: ${checkoutRequestId}`);
+  log.info(`[Daraja STK Push] Sending Push for ${order.totalAmount} KES to ${cleanPhone}.. RequestId: ${checkoutRequestId}`);
 
   setTimeout(async () => {
     const currentOrder = orders.find(o => o.id === orderId);
@@ -593,19 +875,38 @@ app.post("/api/mpesa/initiate/:orderId", async (req, res) => {
 async function triggerSimulatedCallback(payload: any) {
   const { CheckoutRequestID, ResultCode, CallbackMetadata } = payload.Body.stkCallback;
   const order = orders.find(o => o.mpesaCheckoutRequestId === CheckoutRequestID);
-  if (!order) { console.error(`[M-Pesa] Unknown callback: ${CheckoutRequestID}`); return; }
-  if (order.status !== "pending") { console.log(`[M-Pesa] Already processed: ${order.id}`); return; }
+  if (!order) { log.error(`[M-Pesa] Unknown callback: ${CheckoutRequestID}`); return; }
+  if (order.status !== "pending") { log.info(`[M-Pesa] Already processed: ${order.id}`); return; }
+
+  // Redis SET NX idempotency lock for the simulated callback path
+  const redisMpesa = getRedis();
+  if (redisMpesa) {
+    const lockKey = `mpesa:processed:${CheckoutRequestID}`;
+    try {
+      const locked = await redisMpesa.set(lockKey, "1", { NX: true, EX: 86400 });
+      if (!locked) { log.info(`[M-Pesa] Redis lock prevented re-process: ${CheckoutRequestID}`); return; }
+    } catch {
+      // Redis unavailable — fall through, in-memory status check is sufficient
+    }
+  }
+
+  if (order.status !== 'pending') return;
 
   if (ResultCode === 0) {
     order.status = "paid";
     await syncUpdate("orders", order.id, { status: "paid" });
-    console.log(`[M-Pesa] Order ${order.id} PAID.`);
+    log.info(`[M-Pesa] Order ${order.id} PAID.`);
 
     const event = events.find(e => e.id === order.eventId);
     if (event) {
-      const gross = order.totalAmount;
-      const fee = Math.round(gross * 0.05 * 100) / 100;
-      const net = gross - fee;
+      const grossCents = Math.round(order.totalAmount * 100);
+      const feeCents = Math.round(grossCents * 0.05);
+      const netCents = grossCents - feeCents;
+
+      const gross = grossCents / 100;
+      const fee = feeCents / 100;
+      const net = netCents / 100;
+
       const entry: LedgerEntry = {
         id: `led-${docId()}`, organizerId: event.organizerId,
         orderId: order.id, eventId: order.eventId,
@@ -640,7 +941,7 @@ async function triggerSimulatedCallback(payload: any) {
   }
 }
 
-app.post("/api/mpesa/simulated-callback", async (req, res) => {
+app.post("/api/mpesa/simulated-callback", validate(schemas.simulatedCallback), async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const { checkoutRequestId, success } = req.body;
   const order = orders.find(o => o.mpesaCheckoutRequestId === checkoutRequestId);
@@ -667,12 +968,8 @@ app.get("/api/orders/:orderId/tickets", (req, res) => {
   res.json(tickets.filter(t => t.orderId === orderId));
 });
 
-app.post("/api/tickets/verify", async (req, res) => {
+app.post("/api/tickets/verify", validate(schemas.verifyTicket), async (req, res) => {
   const { ticketNumber, verificationCode } = req.body;
-
-  if (!ticketNumber || !verificationCode) {
-    return res.status(400).json({ valid: false, error: "Missing ticket credentials" });
-  }
 
   const ticket = tickets.find(t =>
     String(t.ticketNumber) === String(ticketNumber) &&
@@ -693,9 +990,14 @@ app.post("/api/tickets/verify", async (req, res) => {
     return res.json({ valid: false, error: `Ticket already ${ticket.status.toUpperCase()}`, usedAt: ticket.usedAt });
   }
 
-  ticket.status = "used";
-  ticket.usedAt = new Date().toISOString();
-  await syncUpdate("tickets", ticket.id, { status: "used", usedAt: ticket.usedAt });
+  try {
+    ticket.status = "used";
+    ticket.usedAt = new Date().toISOString();
+    await syncUpdate("tickets", ticket.id, { status: "used", usedAt: ticket.usedAt });
+  } catch (err) {
+    log.error("Failed to verify ticket:", err);
+    return res.status(500).json({ valid: false, error: "Failed to verify ticket" });
+  }
 
   const order = orders.find(o => o.id === ticket.orderId);
   const event = events.find(e => e.id === ticket.eventId || (order && e.id === order.eventId));
@@ -746,7 +1048,7 @@ app.post("/api/upload/image", upload.single("image"), async (req, res) => {
     res.json({ url, size: metadata.size });
   } catch (e) {
     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-    console.error("[Upload] Image processing error:", e);
+    log.error("[Upload] Image processing error:", e);
     res.status(500).json({ error: "Failed to process image" });
   }
 });
@@ -780,7 +1082,7 @@ function validateKenyanPhone(phone: string): boolean {
   return /^(254|0)?[17]\d{8}$/.test(phone.replace(/\s+/g, ""));
 }
 
-app.post("/api/wallet/payout-request", async (req, res) => {
+app.post("/api/wallet/payout-request", authLimiter, validate(schemas.payoutRequest), async (req, res) => {
   const org = await getOrganizerByToken(req);
   if (!org) return res.status(401).json({ error: "Unauthorized" });
   if (org.kycStatus !== "verified") {
@@ -788,13 +1090,7 @@ app.post("/api/wallet/payout-request", async (req, res) => {
   }
 
   const { amount, paymentMethod, notes } = req.body;
-  const withdrawAmount = Number(amount);
-  if (isNaN(withdrawAmount) || withdrawAmount <= 100) {
-    return res.status(400).json({ error: "Minimum payout threshold is KES 100" });
-  }
-  if (!paymentMethod || !["mpesa", "bank"].includes(paymentMethod)) {
-    return res.status(400).json({ error: "Payment method must be 'mpesa' or 'bank'" });
-  }
+  const withdrawAmount = amount;
 
   let accountDetails = "";
   if (paymentMethod === "mpesa") {
@@ -830,12 +1126,12 @@ app.post("/api/wallet/payout-request", async (req, res) => {
   // Notify admin
   if (adminEmail) {
     sendEmail(adminEmail, "New Payout Request",
-      `<p>Organizer: ${org.name} (${org.email})</p><p>Amount: KES ${withdrawAmount}</p><p>Method: ${paymentMethod}</p><p>Account: ${accountDetails}</p>`);
+      `<p>Organizer: ${esc(org.name)} (${esc(org.email)})</p><p>Amount: KES ${withdrawAmount}</p><p>Method: ${esc(paymentMethod)}</p><p>Account: ${esc(accountDetails)}</p>`);
   }
 
   // Notify organizer
   sendEmail(org.email, "Payout Request Received",
-    `<p>Your payout request <strong>${newReq.id}</strong> has been received.</p><p>Amount: KES ${withdrawAmount}</p><p>Status: Pending</p><p>Date: ${newReq.requestedAt}</p>`);
+    `<p>Your payout request <strong>${esc(newReq.id)}</strong> has been received.</p><p>Amount: KES ${withdrawAmount}</p><p>Status: Pending</p><p>Date: ${esc(newReq.requestedAt)}</p>`);
 
   res.status(201).json(newReq);
 });
@@ -846,7 +1142,7 @@ app.get("/api/admin/organizers", async (req, res) => {
   res.json(organizers.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
 });
 
-app.patch("/api/admin/organizers/:id", async (req, res) => {
+app.patch("/api/admin/organizers/:id", validate(schemas.adminUpdateOrganizer), async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const org = organizers.find(o => o.id === req.params.id);
   if (!org) return res.status(404).json({ error: "Organizer not found" });
@@ -995,7 +1291,7 @@ app.get("/api/admin/events", async (req, res) => {
   res.json(events.sort((a, b) => new Date(b.eventDate).getTime() - new Date(a.eventDate).getTime()));
 });
 
-app.patch("/api/admin/events/:id", async (req, res) => {
+app.patch("/api/admin/events/:id", validate(schemas.adminUpdateEvent), async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const evt = events.find(e => e.id === req.params.id);
   if (!evt) return res.status(404).json({ error: "Event not found" });
@@ -1020,6 +1316,22 @@ app.delete("/api/admin/events/:id", async (req, res) => {
 app.get("/api/admin/tickets", async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   res.json(tickets.sort((a, b) => new Date(b.issuedAt || b.id).getTime() - new Date(a.issuedAt || a.id).getTime()));
+});
+
+app.delete("/api/admin/tickets/:id", async (req, res) => {
+  if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+
+  const ticket = tickets.find(t => t.id === req.params.id);
+  if (!ticket) return res.status(404).json({ error: "Ticket not found" });
+
+  const idx = tickets.indexOf(ticket);
+  tickets.splice(idx, 1);
+  await syncDelete("tickets", ticket.id);
+
+  await addAuditLog("ticket_deleted", "ticket", ticket.id, "admin", "admin",
+    `Deleted ticket ${ticket.ticketNumber} for event ${ticket.eventId}`);
+
+  res.json({ success: true, message: `Ticket ${ticket.ticketNumber} deleted.` });
 });
 
 // --- ADMIN: AUDIT LOGS ---
@@ -1102,7 +1414,7 @@ app.post("/api/admin/payout-requests/:id/approve", async (req, res) => {
   res.json(pr);
 });
 
-app.post("/api/admin/payout-requests/:id/reject", async (req, res) => {
+app.post("/api/admin/payout-requests/:id/reject", validate(schemas.adminRejectPayout), async (req, res) => {
   if (!await isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
   const pr = payoutRequests.find(p => p.id === req.params.id);
   if (!pr) return res.status(404).json({ error: "Payout request not found" });
@@ -1121,18 +1433,14 @@ app.post("/api/admin/payout-requests/:id/reject", async (req, res) => {
   res.json(pr);
 });
 
-app.post("/api/admin/payout-requests/:id/process", async (req, res) => {
+app.post("/api/admin/payout-requests/:id/process", validate(schemas.adminProcessPayout), async (req, res) => {
   const adminOrg = await getOrganizerByToken(req);
   if (!adminOrg || adminOrg.role !== "admin") return res.status(401).json({ error: "Unauthorized" });
   const pr = payoutRequests.find(p => p.id === req.params.id);
   if (!pr) return res.status(404).json({ error: "Payout request not found" });
   if (pr.status !== "approved") return res.status(400).json({ error: "Request must be approved before processing" });
 
-  // Confirmation code required
   const { confirmationCode } = req.body;
-  if (!confirmationCode || typeof confirmationCode !== "string" || confirmationCode.trim().length < 3) {
-    return res.status(400).json({ error: "A valid payment confirmation code (min 3 characters) is required" });
-  }
 
   // KYC check (defensive — should have passed at approval)
   const org = organizers.find(o => o.id === pr.organizerId);
@@ -1385,6 +1693,43 @@ app.get("/api/admin/payouts", async (req, res) => {
   res.json(enriched.sort((a, b) => new Date(b.processedAt || b.requestedAt).getTime() - new Date(a.processedAt || a.requestedAt).getTime()));
 });
 
+// ---------- HEALTH CHECK ----------
+app.get("/health", (req, res) => {
+  res.json({ status: "healthy", service: "otiko-express", uptime: process.uptime() });
+});
+
+// ---------- SENTRY ERROR HANDLER ----------
+Sentry.setupExpressErrorHandler(app);
+
+// ---------- GLOBAL ERROR HANDLER ----------
+app.use((err: any, req: any, res: any, next: any) => {
+  log.error("Unhandled error:", err);
+  res.status(500).json({ error: "Internal server error" });
+});
+
+// ==================== HEALTH ENDPOINT ====================
+app.get("/health", (req, res) => {
+  const redisHealth = getRedisHealth();
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    redis: {
+      configured: redisHealth.url !== "(not configured)",
+      connected: redisHealth.connected,
+    },
+    env: {
+      node: process.version,
+      sentry: !!process.env.SENTRY_DSN,
+      firebase: !!process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
+      smtp: !!process.env.SMTP_HOST,
+      adminEmail: !!process.env.ADMIN_EMAIL,
+      ticketSecret: !!process.env.TICKET_SECRET,
+      demoAuth: process.env.ALLOW_DEMO_AUTH === "true",
+    },
+  });
+});
+
 // ==================== VITE MIDDLEWARE ====================
 async function startServer() {
   await loadData();
@@ -1404,7 +1749,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Otiko engine running on http://localhost:${PORT}`);
+    log.info(`Otiko engine running on http://localhost:${PORT}`);
   });
 }
 

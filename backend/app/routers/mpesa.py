@@ -1,4 +1,5 @@
 import os
+import logging
 import uuid
 from decimal import Decimal
 from typing import Optional, List, Any
@@ -11,6 +12,8 @@ from redis.asyncio import Redis
 from ..dependencies import get_db, get_redis
 from ..models import Order, OrderStatus, TicketCategory, LedgerEntry, EntryType, Event
 from ..services.mpesa_service import MpesaService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -123,15 +126,19 @@ async def mpesa_callback(
         
     if not checkout_id:
         return {"ResultCode": 1, "ResultDesc": "Invalid payload: CheckoutRequestID is missing"}
-        
-    # 2. Idempotency check using Redis cache
+
+    # 2. Atomic idempotency lock via Redis SET NX + TTL.
+    #    This runs BEFORE any DB read so retries are blocked at the Redis layer,
+    #    eliminating the TOCTOU race of the old GET-then-SETEX pattern.
     cache_key = f"mpesa:processed:{checkout_id}"
     try:
-        is_processed = await redis.get(cache_key)
-        if is_processed:
+        locked = await redis.set(cache_key, "1", nx=True, ex=86400)
+        if not locked:
             return {"ResultCode": 0, "ResultDesc": "Already processed"}
     except Exception as exc:
-        print(f"[MpesaCallback] Redis get error: {exc}")
+        logger.error("MpesaCallback Redis NX error", exc_info=exc)
+        # If Redis is down, fall through — the order-status check (step 4)
+        # provides a second layer of defense against double-processing.
 
     # 3. Retrieve matching Order record
     result = await db.execute(
@@ -153,7 +160,11 @@ async def mpesa_callback(
         # Pull associated Event
         evt_res = await db.execute(select(Event).where(Event.id == order.event_id))
         event = evt_res.scalar_one_or_none()
-        organizer_id = event.organizer_id if event else order.event_id # Fallback
+        if not event:
+            logger.error(f"Cannot process paid order {order.id} — Event {order.event_id} not found!")
+            return {"ResultCode": 1, "ResultDesc": "System error: Event not found"}
+            
+        organizer_id = event.organizer_id
         
         # Calculate platform fee (5%)
         platform_fee = order.total_amount * Decimal("0.05")
@@ -179,7 +190,7 @@ async def mpesa_callback(
             from workers.pdf_tasks import generate_and_send_ticket
             generate_and_send_ticket.delay(str(order.id))
         except Exception as err:
-            print(f"[MpesaCallback] Task enqueue warning: {err}. Proceeding with fallback trigger.")
+            logger.warning("MpesaCallback task enqueue failed, proceeding with fallback trigger", exc_info=err)
     else:
         # User canceled or expired push
         order.status = OrderStatus.FAILED
@@ -194,10 +205,10 @@ async def mpesa_callback(
         await db.execute(stmt)
         await db.commit()
 
-    # 6. Set Redis TTL flag
-    try:
-        await redis.setex(cache_key, 86400, "1")  # 24 hour TTL protection
-    except Exception as exc:
-        print(f"[MpesaCallback] Redis set processed warning: {exc}")
-        
+        # Release Redis reservation lock so frontend sees inventory immediately
+        try:
+            await redis.incrby(f"ticket:cat:{order.category_id}:remaining", order.quantity)
+        except Exception as e:
+            logger.warning("Failed to release Redis inventory lock", exc_info=e)
+
     return {"ResultCode": 0, "ResultDesc": "Success callback handled correctly"}

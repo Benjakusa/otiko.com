@@ -20,14 +20,14 @@ class OrganizerResponse(BaseModel):
         from_attributes = True
 
 class KYCUploadRequest(BaseModel):
-    business_name: str
-    mpesa_payout_number: str
+    business_name: str = Field(..., min_length=1, max_length=200)
+    mpesa_payout_number: str = Field(..., pattern=r"^254\d{9}$")
 
 class OrganizerRegisterRequest(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=200)
     email: EmailStr
-    business_name: str
-    mpesa_payout_number: str
+    business_name: str = Field(..., min_length=1, max_length=200)
+    mpesa_payout_number: str = Field(..., pattern=r"^254\d{9}$")
 
 # --- TICKET CATEGORY SCHEMAS ---
 class TicketCategoryCreate(BaseModel):

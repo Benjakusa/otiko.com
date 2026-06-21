@@ -4,17 +4,25 @@ import { Event, Organizer, LedgerEntry, Payout, PayoutRequest } from "../types";
 
 type DashboardSection = "overview" | "events" | "payments" | "verification";
 
-interface UserDashboardProps {
-  organizer: Organizer | null;
-  events: Event[];
-  walletOverview: any;
-  loading: boolean;
-  onRefresh: () => void;
-  onLogout: () => void;
-  onSelectEvent: (event: Event) => void;
-}
+import { useAppStore } from "../store/useAppStore";
 
-export default function UserDashboard({ organizer, events, walletOverview, loading, onRefresh, onLogout, onSelectEvent }: UserDashboardProps) {
+export default function UserDashboard() {
+  const { organizer, events, walletOverview, loading, fetchData, setToken, setOrganizer } = useAppStore();
+  
+  const onRefresh = () => {
+    fetchData();
+  };
+  
+  const onLogout = () => {
+    setToken("");
+    setOrganizer(null);
+    window.location.href = "/login";
+  };
+  
+  const onSelectEvent = (event: Event) => {
+    // Navigate to event detail or handle selection
+    window.location.href = `/?event=${event.eventCode}`;
+  };
   const [section, setSection] = useState<DashboardSection>("overview");
 
   const dateText = (d: string) => new Date(d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -49,8 +57,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
     formData.append("image", file);
     setImageUploading(true);
     try {
-      const token = localStorage.getItem("otiko_auth_token") || "user-default-uid";
-      const res = await fetch("/api/upload/image", { method: "POST", headers: { "Authorization": `Bearer ${token}` }, body: formData });
+      const res = await fetch("/api/upload/image", { method: "POST", credentials: "include", body: formData });
       const data = await res.json();
       if (res.ok) { setForm({...form, flyer: data.url}); setImagePreview(null); }
       else { alert(data.error || "Upload failed"); }
@@ -87,7 +94,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
     try {
       const res = await fetch("/api/events", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("otiko_auth_token") || "user-default-uid"}` },
+        headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify({
           name: form.name, eventDate: form.eventDate, venue: form.venue,
           description: form.description, flyerUrl: form.flyer,
@@ -124,7 +131,6 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
 
     setPayoutLoading(true); setPayoutError(""); setPayoutSuccess("");
     try {
-      const token = localStorage.getItem("otiko_auth_token") || "user-default-uid";
       const body: any = { amount: Number(payoutAmount), paymentMethod, notes: payoutNotes };
       if (paymentMethod === "mpesa") {
         body.phoneNumber = mpesaPhone;
@@ -136,7 +142,8 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
       }
       const res = await fetch("/api/wallet/payout-request", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(body)
       });
       const data = await res.json();
@@ -154,7 +161,7 @@ export default function UserDashboard({ organizer, events, walletOverview, loadi
     try {
       const res = await fetch(`/api/events/${code}`, {
         method: "DELETE",
-        headers: { "Authorization": `Bearer ${localStorage.getItem("otiko_auth_token") || "user-default-uid"}` }
+        credentials: "include"
       });
       if (res.ok) onRefresh();
       else { const err = await res.json(); alert(err.error || "Delete failed"); }
