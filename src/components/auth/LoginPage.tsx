@@ -2,26 +2,27 @@ import React, { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { loginSchema, LoginInput } from "../../lib/validation/authSchemas";
 import { authService } from "../../lib/firebase/auth";
 import PasswordInput from "./PasswordInput";
 import AuthCard from "./AuthCard";
+import { useAppStore } from "../../store/useAppStore";
 
-interface LoginPageProps {
-  onBackToHome: () => void;
-  onSignupNavigate: () => void;
-  onForgotPasswordNavigate: () => void;
-  onLoginSuccess: (organizerData: any, token: string) => void;
-}
-
-export default function LoginPage({ 
-  onBackToHome, 
-  onSignupNavigate, 
-  onForgotPasswordNavigate, 
-  onLoginSuccess 
-}: LoginPageProps) {
+export default function LoginPage() {
+  const navigate = useNavigate();
+  const { setToken, setOrganizer } = useAppStore();
   const [loading, setLoading] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+
+  const onBackToHome = () => navigate("/");
+  const onSignupNavigate = () => navigate("/signup");
+  const onForgotPasswordNavigate = () => navigate("/forgot-password");
+  const onLoginSuccess = (organizerData: any, token: string) => {
+    setOrganizer(organizerData);
+    setToken(token);
+    navigate("/dashboard");
+  };
 
   const {
     register,
@@ -37,10 +38,7 @@ export default function LoginPage({
     setSubmissionError(null);
 
     try {
-      // 1. Sign in via client-side Auth wrapper
       const user = await authService.signIn(data.email, data.password);
-
-      // 2. Load Organizer profile details from Otiko backend system
       const res = await fetch("/api/organizers/me", { credentials: "include" });
 
       if (!res.ok) {
@@ -48,15 +46,12 @@ export default function LoginPage({
       }
 
       const organizerData = await res.json();
-      
-      // 3. Callback to update parent context state with Firebase ID token
       onLoginSuccess(organizerData, user.idToken);
     } catch (err: any) {
       console.error("Login verification failed:", err);
       if (err.code === "auth/configuration-not-found" || (err.message && err.message.includes("configuration-not-found"))) {
         setSubmissionError("CONFIGURATION_NOT_FOUND");
       } else {
-        // Security Best Practice: Don't reveal which credential was incorrect.
         setSubmissionError("Invalid email or password");
       }
     } finally {
@@ -70,7 +65,6 @@ export default function LoginPage({
     try {
       const user = await authService.signInWithGoogle();
 
-      // Attempt to load organizer profile, or auto-create if not found
       let orgRes = await fetch("/api/organizers/me", { credentials: "include" });
 
       let organizerData;
@@ -118,7 +112,6 @@ export default function LoginPage({
       </div>
 
       <div className="space-y-3 mt-4">
-        {/* Google Authentication Button */}
         <button
           type="button"
           onClick={handleGoogleLogin}
@@ -141,8 +134,6 @@ export default function LoginPage({
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" aria-live="polite">
-        
-        {/* Email Field */}
         <div className="space-y-1.5">
           <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider">
             Email Address
@@ -160,7 +151,6 @@ export default function LoginPage({
           )}
         </div>
 
-        {/* Password and Forgot link */}
         <div className="space-y-1">
           <div className="flex items-center justify-between">
             {!submissionError && (
@@ -180,14 +170,12 @@ export default function LoginPage({
           />
         </div>
 
-        {/* Invalid Credential Box */}
         {submissionError && submissionError !== "CONFIGURATION_NOT_FOUND" && (
           <div className="text-[11px] font-semibold text-rose-650 bg-rose-50 border border-rose-100 p-3 rounded-xl text-center">
             {submissionError}
           </div>
         )}
 
-        {/* DIAGNOSTIC PANEL FOR CONFIGURATION NOT FOUND */}
         {submissionError === "CONFIGURATION_NOT_FOUND" && (
           <div className="text-xs text-slate-700 bg-slate-50 border border-slate-200 p-4 rounded-xl space-y-3">
             <h4 className="font-bold text-rose-650 flex items-center gap-1.5 uppercase text-[10px] tracking-wider">
@@ -207,12 +195,11 @@ export default function LoginPage({
           </div>
         )}
 
-        {/* Log In Button */}
         <button
           type="submit"
           disabled={loading}
           aria-busy={loading}
-              className="w-full bg-red-600 hover:bg-blue-600 hover:text-white disabled:bg-slate-300 text-white font-bold py-3 rounded-xl text-xs transition-colors duration-250 flex items-center justify-center gap-2 mt-2 cursor-pointer"
+          className="w-full bg-red-600 hover:bg-blue-600 hover:text-white disabled:bg-slate-300 text-white font-bold py-3 rounded-xl text-xs transition-colors duration-250 flex items-center justify-center gap-2 mt-2 cursor-pointer"
         >
           {loading ? (
             <>
@@ -224,7 +211,6 @@ export default function LoginPage({
           )}
         </button>
 
-        {/* Signup redirection route */}
         <div className="text-center pt-2">
           <p className="text-xs text-slate-500">
             Don't have an account?{" "}
@@ -237,7 +223,6 @@ export default function LoginPage({
             </button>
           </p>
         </div>
-
       </form>
     </AuthCard>
   );

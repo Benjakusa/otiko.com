@@ -4,17 +4,25 @@ import { Event, Organizer, LedgerEntry, Payout, PayoutRequest } from "../types";
 
 type DashboardSection = "overview" | "events" | "payments" | "verification";
 
-interface UserDashboardProps {
-  organizer: Organizer | null;
-  events: Event[];
-  walletOverview: any;
-  loading: boolean;
-  onRefresh: () => void;
-  onLogout: () => void;
-  onSelectEvent: (event: Event) => void;
-}
+import { useAppStore } from "../store/useAppStore";
 
-export default function UserDashboard({ organizer, events, walletOverview, loading, onRefresh, onLogout, onSelectEvent }: UserDashboardProps) {
+export default function UserDashboard() {
+  const { organizer, events, walletOverview, loading, fetchData, setToken, setOrganizer } = useAppStore();
+  
+  const onRefresh = () => {
+    fetchData();
+  };
+  
+  const onLogout = () => {
+    setToken("");
+    setOrganizer(null);
+    window.location.href = "/login";
+  };
+  
+  const onSelectEvent = (event: Event) => {
+    // Navigate to event detail or handle selection
+    window.location.href = `/?event=${event.eventCode}`;
+  };
   const [section, setSection] = useState<DashboardSection>("overview");
 
   const dateText = (d: string) => new Date(d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });

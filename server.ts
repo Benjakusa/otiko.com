@@ -748,7 +748,8 @@ app.post("/api/orders/reserve", apiLimiter, validate(schemas.reserveOrder), asyn
   const category = ticketCategories[categoryIndex];
   const evt = events.find(e => e.id === category.eventId);
   if (!evt || evt.status !== "active") return res.status(400).json({ error: "This event is not actively accepting reservations" });
-  if (new Date(evt.eventDate).getTime() < Date.now()) return res.status(400).json({ error: "This event date has already passed" });
+  const parsedEventDate = evt.eventDate.includes('Z') || evt.eventDate.includes('+') ? new Date(evt.eventDate) : new Date(evt.eventDate + 'Z');
+  if (parsedEventDate.getTime() < Date.now()) return res.status(400).json({ error: "This event date has already passed" });
 
   // --- Phase A: Atomic reservation via Redis ---
   const redis = getRedis();
@@ -898,9 +899,14 @@ async function triggerSimulatedCallback(payload: any) {
 
     const event = events.find(e => e.id === order.eventId);
     if (event) {
-      const gross = order.totalAmount;
-      const fee = Math.round(gross * 0.05 * 100) / 100;
-      const net = gross - fee;
+      const grossCents = Math.round(order.totalAmount * 100);
+      const feeCents = Math.round(grossCents * 0.05);
+      const netCents = grossCents - feeCents;
+
+      const gross = grossCents / 100;
+      const fee = feeCents / 100;
+      const net = netCents / 100;
+
       const entry: LedgerEntry = {
         id: `led-${docId()}`, organizerId: event.organizerId,
         orderId: order.id, eventId: order.eventId,

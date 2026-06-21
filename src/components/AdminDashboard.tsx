@@ -5,13 +5,9 @@ import {
   Loader2, CheckCircle2, XCircle, ArrowRight, Search, Filter,
   ChevronDown, MoreVertical, Mail, Phone, Trash2, Eye, EyeOff
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useAppStore } from "../store/useAppStore";
 import { PayoutRequest, Organizer, Event, Ticket as TicketType } from "../types";
-
-interface AdminDashboardProps {
-  token: string;
-  organizer: Organizer | null;
-  onLogout: () => void;
-}
 
 const SIDEBAR_ITEMS = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
@@ -67,11 +63,14 @@ function statusColor(s: string) {
   }
 }
 
-export default function AdminDashboard({ token, organizer, onLogout }: AdminDashboardProps) {
+export default function AdminDashboard() {
   const [activeSection, setActiveSection] = useState("overview");
+  const { token, organizer, logout } = useAppStore();
+  const navigate = useNavigate();
 
   if (activeSection === "logout") {
-    onLogout();
+    logout();
+    navigate("/");
     return null;
   }
 

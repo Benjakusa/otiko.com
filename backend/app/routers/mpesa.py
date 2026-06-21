@@ -160,7 +160,11 @@ async def mpesa_callback(
         # Pull associated Event
         evt_res = await db.execute(select(Event).where(Event.id == order.event_id))
         event = evt_res.scalar_one_or_none()
-        organizer_id = event.organizer_id if event else order.event_id # Fallback
+        if not event:
+            logger.error(f"Cannot process paid order {order.id} — Event {order.event_id} not found!")
+            return {"ResultCode": 1, "ResultDesc": "System error: Event not found"}
+            
+        organizer_id = event.organizer_id
         
         # Calculate platform fee (5%)
         platform_fee = order.total_amount * Decimal("0.05")
@@ -200,5 +204,11 @@ async def mpesa_callback(
         )
         await db.execute(stmt)
         await db.commit()
+
+        # Release Redis reservation lock so frontend sees inventory immediately
+        try:
+            await redis.incrby(f"ticket:cat:{order.category_id}:remaining", order.quantity)
+        except Exception as e:
+            logger.warning("Failed to release Redis inventory lock", exc_info=e)
 
     return {"ResultCode": 0, "ResultDesc": "Success callback handled correctly"}

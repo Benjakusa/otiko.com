@@ -3,17 +3,14 @@ import { ArrowLeft, BookOpen, Shield, ShieldCheck, HelpCircle, FileText } from "
 
 export type PolicySection = "refund" | "privacy" | "cookies" | "terms";
 
-interface PolicyPagesProps {
-  activeSection: PolicySection;
-  onChangeSection: (section: PolicySection) => void;
-  onBackToHome: () => void;
-}
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
-export default function PolicyPages({
-  activeSection,
-  onChangeSection,
-  onBackToHome,
-}: PolicyPagesProps) {
+export default function PolicyPages() {
+  const navigate = useNavigate();
+  const [activeSection, setActiveSection] = useState<PolicySection>("refund");
+  const onChangeSection = (section: PolicySection) => setActiveSection(section);
+  const onBackToHome = () => navigate("/");
   return (
     <div id="policy-shared-layout" className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-red-250 selection:text-slate-900 pb-16">
       

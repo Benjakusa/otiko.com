@@ -2,14 +2,15 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { CheckCircle2, AlertCircle, X, Loader2, Camera, CameraOff } from "lucide-react";
 import jsQR from "jsqr";
 
+import { useNavigate } from "react-router-dom";
+import { useAppStore } from "../store/useAppStore";
+
 type ScanStatus = "idle" | "valid" | "used" | "invalid" | "error";
 
-interface TicketScannerSimProps {
-  onClose: () => void;
-  token: string;
-}
-
-export default function TicketScannerSim({ onClose, token }: TicketScannerSimProps) {
+export default function TicketScannerSim() {
+  const navigate = useNavigate();
+  const { token } = useAppStore();
+  const onClose = () => navigate(-1);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
